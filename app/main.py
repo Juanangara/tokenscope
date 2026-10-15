@@ -4,7 +4,9 @@ import httpx
 
 from app.adapters.inbound.http_api import create_app
 from app.adapters.outbound.llama_cpp import LlamaCppBackend
+from app.application.admission import AdmissionController
 from app.application.ports.inference_backend import InferenceBackend
+from app.application.protected_backend import ProtectedBackend
 from app.application.use_cases import GenerateChat, StreamChat
 from app.config import Settings
 from app.domain.limits import RequestLimits
@@ -21,7 +23,12 @@ def build_app():
     client = httpx.AsyncClient(
         base_url=settings.llama_base_url, timeout=settings.backend_timeout_s
     )
-    backend = build_backend(settings, client)
+    admission = AdmissionController(
+        settings.max_concurrent_requests, settings.max_queue_size, settings.queue_timeout_s
+    )
+    backend = ProtectedBackend(
+        build_backend(settings, client), admission, settings.generation_timeout_s
+    )
     limits = RequestLimits(settings.max_prompt_chars, settings.max_tokens_limit)
 
     @asynccontextmanager

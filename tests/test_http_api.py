@@ -5,8 +5,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.adapters.inbound.http_api import create_app
+from app.application.errors import GenerationTimeout, Overloaded, QueueTimeout
 from app.application.use_cases import GenerateChat, StreamChat
 from app.domain.limits import RequestLimits
+from app.domain.models import ChatChunk
 from tests.fakes import FakeBackend
 
 BODY = {"messages": [{"role": "user", "content": "hi"}]}
@@ -100,6 +102,43 @@ def test_backend_failure_returns_503():
 
     assert response.status_code == 503
     assert response.json()["error"]["type"] == "service_unavailable"
+
+
+@pytest.mark.parametrize(
+    "error, status, error_type",
+    [
+        (Overloaded("busy"), 429, "rate_limit_error"),
+        (QueueTimeout("waited"), 503, "service_unavailable"),
+        (GenerationTimeout("slow"), 504, "timeout_error"),
+    ],
+)
+@pytest.mark.parametrize("stream", [False, True])
+def test_protection_errors_get_their_own_status(error, status, error_type, stream):
+    client = TestClient(make_app(FakeBackend(error=error)))
+
+    response = client.post("/v1/chat/completions", json={**BODY, "stream": stream})
+
+    assert response.status_code == status
+    assert response.json()["error"]["type"] == error_type
+    if status in (429, 503):
+        assert response.headers["retry-after"] == "1"
+
+
+def test_midstream_generation_timeout_is_reported_inside_the_stream():
+    class TimesOutAfterFirstPiece(FakeBackend):
+        async def stream(self, request):
+            yield ChatChunk(delta="a")
+            raise GenerationTimeout("slow")
+
+    client = TestClient(make_app(TimesOutAfterFirstPiece()))
+
+    response = client.post("/v1/chat/completions", json={**BODY, "stream": True})
+
+    assert response.status_code == 200
+    events = sse_events(response.text)
+    assert "[DONE]" not in events
+    error = json.loads(events[-1])["error"]
+    assert (error["code"], error["type"]) == (504, "timeout_error")
 
 
 def test_stream_returns_server_sent_events(client):

@@ -10,6 +10,10 @@ class Settings:
     model_name: str = "llama-3.2-1b-instruct"
     max_prompt_chars: int = 8000
     max_tokens_limit: int = 1024
+    max_concurrent_requests: int = 2
+    max_queue_size: int = 8
+    queue_timeout_s: float = 30.0
+    generation_timeout_s: float = 120.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -21,4 +25,12 @@ class Settings:
             model_name=os.getenv("MODEL_NAME", defaults.model_name),
             max_prompt_chars=int(os.getenv("MAX_PROMPT_CHARS", defaults.max_prompt_chars)),
             max_tokens_limit=int(os.getenv("MAX_TOKENS_LIMIT", defaults.max_tokens_limit)),
+            max_concurrent_requests=int(
+                os.getenv("MAX_CONCURRENT_REQUESTS", defaults.max_concurrent_requests)
+            ),
+            max_queue_size=int(os.getenv("MAX_QUEUE_SIZE", defaults.max_queue_size)),
+            queue_timeout_s=float(os.getenv("QUEUE_TIMEOUT_S", defaults.queue_timeout_s)),
+            generation_timeout_s=float(
+                os.getenv("GENERATION_TIMEOUT_S", defaults.generation_timeout_s)
+            ),
         )

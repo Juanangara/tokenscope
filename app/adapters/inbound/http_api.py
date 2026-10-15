@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from app.application.errors import GenerationTimeout, Overloaded, QueueTimeout
 from app.application.ports.inference_backend import BackendUnavailable
 from app.application.use_cases import GenerateChat, StreamChat
 from app.domain.limits import InvalidRequest
@@ -27,6 +28,16 @@ class ChatCompletionIn(BaseModel):
     top_p: float | None = None
     stop: str | list[str] | None = None
     stream: bool = False
+
+
+# What each service failure looks like to the client: (HTTP status, error type).
+_FAILURES: dict[type[Exception], tuple[int, str]] = {
+    BackendUnavailable: (503, "service_unavailable"),
+    Overloaded: (429, "rate_limit_error"),
+    QueueTimeout: (503, "service_unavailable"),
+    GenerationTimeout: (504, "timeout_error"),
+}
+RETRY_AFTER_S = "1"
 
 
 def _error_body(status: int, message: str, error_type: str) -> dict:
@@ -93,9 +104,10 @@ async def _event_stream(first: ChatChunk | None, chunks: AsyncIterator[ChatChunk
             except StopAsyncIteration:
                 break
         yield "data: [DONE]\n\n"
-    except BackendUnavailable as exc:
+    except (BackendUnavailable, GenerationTimeout) as exc:
         # The 200 status is already sent, so the error travels inside the stream.
-        yield _sse(_error_body(503, str(exc), "service_unavailable"))
+        status, error_type = _FAILURES[type(exc)]
+        yield _sse(_error_body(status, str(exc), error_type))
     finally:
         # Runs when the stream ends, fails, or the client disconnects (the task is cancelled):
         # closing the iterator closes the connection to the engine, which stops generating.
@@ -116,9 +128,18 @@ def create_app(generate_chat: GenerateChat, stream_chat: StreamChat, model_name:
         where = ".".join(str(part) for part in first["loc"])
         return _error(400, f"{where}: {first['msg']}", "invalid_request_error")
 
-    @app.exception_handler(BackendUnavailable)
-    async def backend_unavailable_handler(_: Request, exc: BackendUnavailable):
-        return _error(503, str(exc), "service_unavailable")
+    def register_failure(exc_type: type[Exception]) -> None:
+        @app.exception_handler(exc_type)
+        async def handler(_: Request, exc: Exception):
+            status, error_type = _FAILURES[exc_type]
+            headers = {"Retry-After": RETRY_AFTER_S} if status in (429, 503) else None
+            response = _error(status, str(exc), error_type)
+            if headers:
+                response.headers.update(headers)
+            return response
+
+    for failure_type in _FAILURES:
+        register_failure(failure_type)
 
     @app.post("/v1/chat/completions")
     async def chat_completions(body: ChatCompletionIn):

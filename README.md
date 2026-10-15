@@ -39,6 +39,21 @@ curl -N http://localhost:8000/v1/chat/completions \
   -d '{"messages":[{"role":"user","content":"Count to 5."}],"stream":true}'
 ```
 
+## Overload protection
+The engine can only serve a few requests at once, so the gateway decides who gets in:
+
+| Situation | Answer |
+|---|---|
+| A slot is free | Served right away |
+| All slots busy, queue has room | Waits its turn (up to `QUEUE_TIMEOUT_S`) |
+| Queue is full | `429` immediately, with `Retry-After` |
+| Waited too long in the queue | `503` with `Retry-After` |
+| Answer takes longer than `GENERATION_TIMEOUT_S` | `504` (inside the stream as an error event if it already started) |
+
+Limits are set in `.env` (`MAX_CONCURRENT_REQUESTS`, `MAX_QUEUE_SIZE`, `QUEUE_TIMEOUT_S`, `GENERATION_TIMEOUT_S`). Keep `MAX_CONCURRENT_REQUESTS` equal to the engine's `PARALLEL_SLOTS`. A client that disconnects while waiting or generating gives its place back.
+
+With 2 slots and a queue of 2, a burst of 7 simultaneous requests gives 4 answers (2 served at once, 2 after waiting) and 3 immediate `429`s, and the service keeps working afterwards.
+
 Interactive docs at http://localhost:8000/docs. Errors follow the OpenAI shape: `400` for invalid input, `503` when the engine is unreachable.
 
 Tests (no model needed, they use a fake backend):
