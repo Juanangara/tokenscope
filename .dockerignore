@@ -1,0 +1,12 @@
+.git
+.venv
+.env
+models
+tests
+docs
+grafana
+prometheus
+scripts
+__pycache__
+*.pyc
+.pytest_cache

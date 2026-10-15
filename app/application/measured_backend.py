@@ -1,8 +1,9 @@
 import time
 from collections.abc import AsyncIterator, Callable
 
+from app.application.admission import queue_wait_s
 from app.application.errors import GenerationTimeout, Overloaded, QueueTimeout
-from app.application.ports.inference_backend import BackendUnavailable, InferenceBackend
+from app.application.ports.inference_backend import InferenceBackend
 from app.application.ports.metrics import MetricsSink, RequestSample
 from app.domain.models import ChatChunk, ChatRequest, ChatResult
 
@@ -10,9 +11,11 @@ from app.domain.models import ChatChunk, ChatRequest, ChatResult
 class MeasuredBackend:
     """Decorator that times every request and reports it to a MetricsSink.
 
-    It wraps the protected backend, so durations include the time spent waiting in the queue.
-    Requests turned away (Overloaded, QueueTimeout) never reach the engine and are not
-    recorded here; whoever turns them into a response counts them as rejections.
+    It wraps the protected backend, so durations include the time spent waiting in the queue
+    (that is what the client experiences); the wait itself is reported separately so speed can
+    be computed without it. Requests turned away (Overloaded, QueueTimeout) never reach the
+    engine and are not recorded here; whoever turns them into a response counts them as
+    rejections.
     """
 
     def __init__(self, inner: InferenceBackend, metrics: MetricsSink,
@@ -26,6 +29,7 @@ class MeasuredBackend:
 
     async def generate(self, request: ChatRequest) -> ChatResult:
         started = self._clock()
+        queue_wait_s.set(0.0)
         outcome: str | None = "cancelled"  # what it stays if we are cancelled mid-way
         usage = None
         try:
@@ -44,12 +48,14 @@ class MeasuredBackend:
         finally:
             if outcome:
                 self._record(False, outcome, started, None, usage and usage.prompt_tokens,
-                             usage and usage.completion_tokens)
+                             usage and usage.completion_tokens, queue_wait_s.get())
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ChatChunk]:
         started = self._clock()
+        queue_wait_s.set(0.0)
         outcome: str | None = "cancelled"  # the consumer closing the stream lands here
         ttft: float | None = None
+        waited = 0.0
         pieces = 0
         usage = None
         try:
@@ -60,6 +66,9 @@ class MeasuredBackend:
                         ttft = self._clock() - started
                 if chunk.usage:
                     usage = chunk.usage
+                # The slot was taken before the first piece existed, in this same task. Later
+                # pieces may be pulled from another task, so read it now and keep it.
+                waited = max(waited, queue_wait_s.get())
                 yield chunk
             outcome = "ok"
         except (Overloaded, QueueTimeout):
@@ -76,10 +85,11 @@ class MeasuredBackend:
                 # Without the engine's own count (cancelled streams), one piece ~ one token.
                 completion = usage.completion_tokens if usage else pieces
                 self._record(True, outcome, started, ttft, usage and usage.prompt_tokens,
-                             completion)
+                             completion, waited)
 
     def _record(self, stream: bool, outcome: str, started: float, ttft: float | None,
-                prompt_tokens: int | None, completion_tokens: int | None) -> None:
+                prompt_tokens: int | None, completion_tokens: int | None,
+                waited: float) -> None:
         self._metrics.request_finished(RequestSample(
             stream=stream,
             outcome=outcome,
@@ -87,4 +97,5 @@ class MeasuredBackend:
             ttft_s=ttft,
             prompt_tokens=prompt_tokens or 0,
             completion_tokens=completion_tokens or 0,
+            queue_wait_s=waited,
         ))

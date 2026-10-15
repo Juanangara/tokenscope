@@ -39,8 +39,8 @@ class PrometheusMetrics:
             buckets=TTFT_BUCKETS, registry=r)
         self._tokens_per_second = Histogram(
             "tokenscope_tokens_per_second",
-            "Generation speed of finished requests. Streamed answers exclude the wait for the "
-            "first token; non-streamed ones are completion tokens over total time.",
+            "Generation speed of finished requests. Time in the queue is never counted; "
+            "streamed answers also leave out the wait for the first token.",
             ["stream"], buckets=TOKENS_PER_SECOND_BUCKETS, registry=r)
         self._prompt_tokens = Counter(
             "tokenscope_prompt_tokens_total", "Prompt tokens processed.", registry=r)
@@ -75,7 +75,10 @@ class PrometheusMetrics:
             self._ttft.observe(sample.ttft_s)
 
         if sample.outcome == "ok" and sample.completion_tokens > 0:
-            window = sample.duration_s - (sample.ttft_s or 0.0)
+            # Time spent generating: leave out the queue wait and, for streams, also the wait
+            # for the first token (ttft already includes the queue wait).
+            lead = sample.ttft_s if sample.ttft_s is not None else sample.queue_wait_s
+            window = sample.duration_s - lead
             if window > 0:
                 self._tokens_per_second.labels(stream).observe(
                     sample.completion_tokens / window)

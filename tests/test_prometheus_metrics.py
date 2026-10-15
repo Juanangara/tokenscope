@@ -58,11 +58,23 @@ def test_streamed_speed_leaves_out_the_wait_for_the_first_token(metrics):
     assert value(metrics, "tokenscope_tokens_per_second_sum", stream="true") == pytest.approx(10)
 
 
-def test_non_streamed_speed_uses_the_whole_time(metrics):
+def test_non_streamed_speed_uses_the_time_spent_generating(metrics):
     metrics.request_finished(sample(stream=False, ttft_s=None, duration_s=4.0,
                                     completion_tokens=20))
 
     assert value(metrics, "tokenscope_tokens_per_second_sum", stream="false") == pytest.approx(5)
+
+
+def test_time_in_the_queue_is_never_counted_as_generation_time(metrics):
+    # 4s in total, 3s of them waiting for a slot: 20 tokens in 1s of real work
+    metrics.request_finished(sample(stream=False, ttft_s=None, duration_s=4.0,
+                                    queue_wait_s=3.0, completion_tokens=20))
+    # streamed: ttft (2.5s) already contains the 2s wait; 20 tokens in the remaining 1.5s
+    metrics.request_finished(sample(stream=True, ttft_s=2.5, duration_s=4.0,
+                                    queue_wait_s=2.0, completion_tokens=15))
+
+    assert value(metrics, "tokenscope_tokens_per_second_sum", stream="false") == pytest.approx(20)
+    assert value(metrics, "tokenscope_tokens_per_second_sum", stream="true") == pytest.approx(10)
 
 
 @pytest.mark.parametrize("overrides", [

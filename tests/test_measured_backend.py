@@ -1,10 +1,14 @@
+import asyncio
+
 import pytest
 
+from app.application.admission import AdmissionController
 from app.application.errors import GenerationTimeout, Overloaded, QueueTimeout
 from app.application.measured_backend import MeasuredBackend
 from app.application.ports.inference_backend import BackendUnavailable
+from app.application.protected_backend import ProtectedBackend
 from app.domain.models import ChatChunk, ChatMessage, ChatRequest, ChatResult, GenerationParams, Usage
-from tests.fakes import FakeClock, RecordingMetrics
+from tests.fakes import FakeBackend, FakeClock, RecordingMetrics
 
 REQUEST = ChatRequest((ChatMessage("user", "hi"),), GenerationParams(max_tokens=10))
 
@@ -140,6 +144,46 @@ async def test_without_usage_pieces_stand_in_for_tokens(clock, metrics):
     [c async for c in backend.stream(REQUEST)]
 
     assert metrics.samples[0].completion_tokens == 3
+
+
+class TestQueueWaitIsReported:
+    """MeasuredBackend wrapped around the real ProtectedBackend and AdmissionController."""
+
+    @staticmethod
+    def stack(metrics, max_concurrent=1):
+        gate = asyncio.Event()
+        engine = FakeBackend(gate=gate)
+        admission = AdmissionController(max_concurrent, max_queue=5, queue_timeout_s=5)
+        return MeasuredBackend(ProtectedBackend(engine, admission, 5), metrics), gate
+
+    async def test_a_request_served_at_once_waited_nothing(self, metrics):
+        backend, gate = self.stack(metrics)
+        gate.set()
+
+        await backend.generate(REQUEST)
+
+        assert metrics.samples[0].queue_wait_s < 0.01
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_a_queued_request_reports_how_long_it_waited(self, metrics, stream):
+        backend, gate = self.stack(metrics)
+
+        async def serve():
+            if stream:
+                return [c async for c in backend.stream(REQUEST)]
+            return await backend.generate(REQUEST)
+
+        first = asyncio.create_task(serve())
+        await asyncio.sleep(0)
+        second = asyncio.create_task(serve())
+        await asyncio.sleep(0.1)  # the second one sits in the queue
+        gate.set()
+        await asyncio.gather(first, second)
+
+        by_wait = sorted(metrics.samples, key=lambda s: s.queue_wait_s)
+        assert by_wait[0].queue_wait_s < 0.01
+        assert by_wait[1].queue_wait_s >= 0.09
+        assert by_wait[1].duration_s >= by_wait[1].queue_wait_s  # the wait is part of the total
 
 
 async def test_readiness_comes_from_the_engine(clock, metrics):

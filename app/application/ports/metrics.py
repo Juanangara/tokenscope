@@ -17,6 +17,7 @@ class RequestSample:
     ttft_s: float | None
     prompt_tokens: int
     completion_tokens: int
+    queue_wait_s: float = 0.0  # already part of duration_s (and of ttft_s)
 
 
 class MetricsSink(Protocol):

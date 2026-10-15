@@ -4,7 +4,7 @@ A low-latency LLM inference service with observability, built to run on modest h
 
 It serves a quantized open-source model behind an OpenAI-compatible API, protects itself from overload with a bounded queue, and exposes per-request metrics (time to first token, tokens per second) in Prometheus and Grafana.
 
-> Status: in design. See [requirements](docs/requirements.md) and [architecture](docs/architecture.md).
+> Status: under construction. See [requirements](docs/requirements.md) and [architecture](docs/architecture.md).
 
 ## Quick start
 Requirements: Docker.
@@ -12,18 +12,30 @@ Requirements: Docker.
 ```
 cp .env.example .env
 sh scripts/download_model.sh      # ~0.8 GB, saved in ./models
-docker compose up -d
+docker compose up -d --build
 ```
 
-Run the gateway:
+One command starts the whole stack. Everything listens on localhost only:
+
+| Service | URL | What it is |
+|---|---|---|
+| Gateway | http://localhost:8000 | The API (`/docs` for the interactive documentation) |
+| Grafana | http://localhost:3000 | Dashboard "tokenscope overview" (read-only without login; admin password in `.env`) |
+| Prometheus | http://localhost:9090 | Metrics storage and queries |
+| Engine | http://localhost:8081 | llama.cpp server, behind the gateway |
+
+Inside Compose, the gateway lets exactly `PARALLEL_SLOTS` requests run at once, the same number of slots the engine has, so those two cannot get out of sync.
+
+To run the gateway outside Docker instead (for development), keep the engine up and:
 
 ```
+docker compose up -d llama
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt        # Linux/Mac: .venv/bin/pip
 .venv/Scripts/python -m uvicorn app.main:app --env-file .env
 ```
 
-Ask it something (the engine itself is on port 8081, the gateway on 8000):
+Ask it something:
 
 ```
 curl http://localhost:8000/v1/chat/completions \
@@ -60,7 +72,7 @@ The engine can only serve a few requests at once, so the gateway decides who get
 | Waited too long in the queue | `503` with `Retry-After` |
 | Answer takes longer than `GENERATION_TIMEOUT_S` | `504` (inside the stream as an error event if it already started) |
 
-Limits are set in `.env` (`MAX_CONCURRENT_REQUESTS`, `MAX_QUEUE_SIZE`, `QUEUE_TIMEOUT_S`, `GENERATION_TIMEOUT_S`). Keep `MAX_CONCURRENT_REQUESTS` equal to the engine's `PARALLEL_SLOTS`. A client that disconnects while waiting or generating gives its place back.
+Limits are set in `.env` (`MAX_QUEUE_SIZE`, `QUEUE_TIMEOUT_S`, `GENERATION_TIMEOUT_S`, and `MAX_CONCURRENT_REQUESTS`, which Compose derives from `PARALLEL_SLOTS`; set it by hand, equal to `PARALLEL_SLOTS`, only when running the gateway outside Docker). A client that disconnects while waiting or generating gives its place back.
 
 With 2 slots and a queue of 2, a burst of 7 simultaneous requests gives 4 answers (2 served at once, 2 after waiting) and 3 immediate `429`s, and the service keeps working afterwards.
 
@@ -85,7 +97,12 @@ These three need no API key and should not be exposed to the public internet.
 | `tokenscope_active_requests`, `tokenscope_queued_requests`, `tokenscope_engine_slots` | Live queue state |
 | `tokenscope_system_cpu_percent`, `tokenscope_system_memory_used_bytes`, `tokenscope_gateway_memory_rss_bytes` | Machine and gateway resources |
 
-Streamed speed leaves out the wait for the first token; non-streamed speed is completion tokens over total time. A request cancelled by the client before the engine reports its token count is counted by pieces received (about one token each). The engine itself also exposes its own metrics at `http://localhost:8081/metrics`.
+Speed never counts time spent in the queue; streamed speed also leaves out the wait for the first token. A request cancelled by the client before the engine reports its token count is counted by pieces received (about one token each). The engine itself also exposes its own metrics at `http://localhost:8081/metrics`.
+
+### Dashboard
+Prometheus scrapes the gateway and the engine every 5 seconds, and Grafana ships with the datasource and the "tokenscope overview" dashboard already provisioned (`grafana/`), so there is nothing to configure. It shows what is happening now (active and queued requests, requests/s, p95 time to first token and duration, tokens/s), then time to first token, generation speed, request duration and queue wait over time, outcomes and rejections, token throughput, slots in use, and CPU/RAM.
+
+Latency panels show p50, p95 and p99 as a single blue ramp (the further into the tail, the lighter). CPU and RAM are read from inside Docker, so they describe the virtual machine that runs the containers, not necessarily the whole host. Percentiles come from histogram buckets, so they are estimates between bucket edges.
 
 Interactive docs at http://localhost:8000/docs. Errors follow the OpenAI shape: `400` for invalid input, `503` when the engine is unreachable.
 

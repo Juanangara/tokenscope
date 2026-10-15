@@ -1,9 +1,14 @@
 import asyncio
 import time
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 
 from app.application.errors import Overloaded, QueueTimeout
 from app.application.ports.metrics import MetricsSink, NullMetrics
+
+# How long the current request waited for its slot. Set by `slot()` in the task that serves the
+# request, so whoever times that request (MeasuredBackend) can tell queueing from generating.
+queue_wait_s: ContextVar[float] = ContextVar("queue_wait_s", default=0.0)
 
 
 class AdmissionController:
@@ -36,7 +41,9 @@ class AdmissionController:
             await self._wait_for_slot()
         else:
             await self._slots.acquire()
-        self._metrics.queue_waited(time.monotonic() - asked_at)
+        waited = time.monotonic() - asked_at
+        queue_wait_s.set(waited)
+        self._metrics.queue_waited(waited)
 
         self.running += 1
         try:
