@@ -1,0 +1,52 @@
+import pytest
+
+from app.application.ports.inference_backend import BackendUnavailable
+from app.application.use_cases import GenerateChat
+from app.domain.limits import InvalidRequest, RequestLimits
+from app.domain.models import ChatMessage, ChatRequest, GenerationParams
+from tests.fakes import FakeBackend
+
+LIMITS = RequestLimits(max_prompt_chars=50, max_tokens_limit=100)
+
+
+def chat(content="hi") -> ChatRequest:
+    return ChatRequest((ChatMessage("user", content),))
+
+
+async def test_returns_the_backend_answer():
+    backend = FakeBackend("hello there")
+    result = await GenerateChat(backend, LIMITS)(chat())
+
+    assert result.content == "hello there"
+    assert result.usage.total_tokens == 10
+
+
+async def test_default_max_tokens_never_exceeds_the_limit():
+    backend = FakeBackend()
+
+    await GenerateChat(backend, LIMITS)(chat())
+
+    assert backend.requests[0].params.max_tokens == 100  # limit is 100, default would be 256
+
+
+async def test_explicit_max_tokens_is_kept():
+    backend = FakeBackend()
+    request = ChatRequest((ChatMessage("user", "hi"),), GenerationParams(max_tokens=20))
+
+    await GenerateChat(backend, LIMITS)(request)
+
+    assert backend.requests[0].params.max_tokens == 20
+
+
+async def test_invalid_request_never_reaches_the_backend():
+    backend = FakeBackend()
+
+    with pytest.raises(InvalidRequest):
+        await GenerateChat(backend, LIMITS)(chat("x" * 51))
+
+    assert backend.requests == []
+
+
+async def test_backend_failure_is_propagated():
+    with pytest.raises(BackendUnavailable):
+        await GenerateChat(FakeBackend(fail=True), LIMITS)(chat())

@@ -15,12 +15,29 @@ sh scripts/download_model.sh      # ~0.8 GB, saved in ./models
 docker compose up -d
 ```
 
-Test the engine directly:
+Run the gateway:
 
 ```
-curl http://localhost:8081/v1/chat/completions \
+python -m venv .venv
+.venv/Scripts/pip install -r requirements.txt        # Linux/Mac: .venv/bin/pip
+.venv/Scripts/python -m uvicorn app.main:app --env-file .env
+```
+
+Ask it something (the engine itself is on port 8081, the gateway on 8000):
+
+```
+curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"Say hello."}],"max_tokens":40}'
+```
+
+Interactive docs at http://localhost:8000/docs. Errors follow the OpenAI shape: `400` for invalid input, `503` when the engine is unreachable.
+
+Tests (no model needed, they use a fake backend):
+
+```
+.venv/Scripts/pip install -r requirements-dev.txt
+.venv/Scripts/python -m pytest
 ```
 
 On the development machine (i5-1235U, no GPU) the 1B Q4 model generates around 30 tokens/s.
