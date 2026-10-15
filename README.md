@@ -6,6 +6,25 @@ It serves a quantized open-source model behind an OpenAI-compatible API, protect
 
 > Status: in design. See [requirements](docs/requirements.md) and [architecture](docs/architecture.md).
 
+## Quick start
+Requirements: Docker.
+
+```
+cp .env.example .env
+sh scripts/download_model.sh      # ~0.8 GB, saved in ./models
+docker compose up -d
+```
+
+Test the engine directly:
+
+```
+curl http://localhost:8081/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Say hello."}],"max_tokens":40}'
+```
+
+On the development machine (i5-1235U, no GPU) the 1B Q4 model generates around 30 tokens/s.
+
 ## Planned phases
 1. Docker Compose with a llama.cpp server answering with a small model
 2. Gateway (FastAPI) with `/v1/chat/completions` and an `InferenceBackend` port
