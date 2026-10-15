@@ -2,9 +2,9 @@ import json
 import math
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
-from fastapi import Depends, FastAPI, Header, Request
+from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -18,6 +18,7 @@ from app.application.errors import (
     Unauthorized,
 )
 from app.application.ports.inference_backend import BackendUnavailable
+from app.application.ports.metrics import MetricsSink, NullMetrics
 from app.application.use_cases import GenerateChat, StreamChat
 from app.domain.limits import InvalidRequest
 from app.domain.models import ChatChunk, ChatMessage, ChatRequest, GenerationParams, Usage
@@ -46,6 +47,12 @@ _FAILURES: dict[type[Exception], tuple[int, str]] = {
     GenerationTimeout: (504, "timeout_error"),
 }
 RETRY_AFTER_S = "1"
+
+# Failures that turn a request away before it reaches the engine, and how they are counted.
+_REJECTIONS: dict[type[Exception], str] = {
+    Overloaded: "overloaded",
+    QueueTimeout: "queue_timeout",
+}
 
 
 def _error_body(status: int, message: str, error_type: str) -> dict:
@@ -123,30 +130,37 @@ async def _event_stream(first: ChatChunk | None, chunks: AsyncIterator[ChatChunk
 
 
 def create_app(generate_chat: GenerateChat, stream_chat: StreamChat, access: AccessControl,
-               model_name: str, lifespan=None) -> FastAPI:
+               model_name: str, lifespan=None, *, metrics: MetricsSink | None = None,
+               render_metrics: Callable[[], tuple[bytes, str]] | None = None,
+               is_ready: Callable[[], Awaitable[bool]] | None = None) -> FastAPI:
     app = FastAPI(title="tokenscope", lifespan=lifespan)
+    metrics = metrics or NullMetrics()
 
     async def authorize(authorization: str | None = Header(default=None)) -> Client:
         return access.authorize(authorization)
 
     @app.exception_handler(Unauthorized)
     async def unauthorized_handler(_: Request, exc: Unauthorized):
+        metrics.request_rejected("unauthorized")
         response = _error(401, str(exc), "authentication_error")
         response.headers["WWW-Authenticate"] = "Bearer"
         return response
 
     @app.exception_handler(RateLimited)
     async def rate_limited_handler(_: Request, exc: RateLimited):
+        metrics.request_rejected("rate_limited")
         response = _error(429, str(exc), "rate_limit_error")
         response.headers["Retry-After"] = str(max(1, math.ceil(exc.retry_after_s)))
         return response
 
     @app.exception_handler(InvalidRequest)
     async def invalid_request_handler(_: Request, exc: InvalidRequest):
+        metrics.request_rejected("invalid_request")
         return _error(400, str(exc), "invalid_request_error")
 
     @app.exception_handler(RequestValidationError)
     async def malformed_request_handler(_: Request, exc: RequestValidationError):
+        metrics.request_rejected("invalid_request")
         first = exc.errors()[0]
         where = ".".join(str(part) for part in first["loc"])
         return _error(400, f"{where}: {first['msg']}", "invalid_request_error")
@@ -154,6 +168,8 @@ def create_app(generate_chat: GenerateChat, stream_chat: StreamChat, access: Acc
     def register_failure(exc_type: type[Exception]) -> None:
         @app.exception_handler(exc_type)
         async def handler(_: Request, exc: Exception):
+            if exc_type in _REJECTIONS:
+                metrics.request_rejected(_REJECTIONS[exc_type])
             status, error_type = _FAILURES[exc_type]
             headers = {"Retry-After": RETRY_AFTER_S} if status in (429, 503) else None
             response = _error(status, str(exc), error_type)
@@ -163,6 +179,24 @@ def create_app(generate_chat: GenerateChat, stream_chat: StreamChat, access: Acc
 
     for failure_type in _FAILURES:
         register_failure(failure_type)
+
+    @app.get("/health")
+    async def health():
+        """Liveness: the gateway process is up."""
+        return {"status": "ok"}
+
+    @app.get("/ready")
+    async def ready():
+        """Readiness: the engine has its model loaded and can take requests."""
+        if is_ready is None or await is_ready():
+            return {"status": "ready"}
+        return JSONResponse(status_code=503, content={"status": "not_ready"})
+
+    if render_metrics is not None:
+        @app.get("/metrics", include_in_schema=False)
+        async def metrics_endpoint():
+            body, content_type = render_metrics()
+            return Response(content=body, media_type=content_type)
 
     @app.post("/v1/chat/completions")
     async def chat_completions(body: ChatCompletionIn, _client: Client = Depends(authorize)):

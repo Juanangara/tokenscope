@@ -11,6 +11,10 @@ class BackendUnavailable(Exception):
 class InferenceBackend(Protocol):
     async def generate(self, request: ChatRequest) -> ChatResult: ...
 
+    async def is_ready(self) -> bool:
+        """True when the engine has its model loaded and can take requests."""
+        ...
+
     def stream(self, request: ChatRequest) -> AsyncIterator[ChatChunk]:
         """Yield the answer piece by piece.
 

@@ -64,6 +64,29 @@ Limits are set in `.env` (`MAX_CONCURRENT_REQUESTS`, `MAX_QUEUE_SIZE`, `QUEUE_TI
 
 With 2 slots and a queue of 2, a burst of 7 simultaneous requests gives 4 answers (2 served at once, 2 after waiting) and 3 immediate `429`s, and the service keeps working afterwards.
 
+## Observability
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Liveness: the gateway process is up |
+| `GET /ready` | Readiness: the engine has its model loaded (`503` while it is loading or down) |
+| `GET /metrics` | Prometheus metrics |
+
+These three need no API key and should not be exposed to the public internet.
+
+| Metric | What it tells you |
+|---|---|
+| `tokenscope_time_to_first_token_seconds` | Time until the first token arrives (streamed answers), queue wait included |
+| `tokenscope_tokens_per_second{stream}` | Generation speed of finished requests |
+| `tokenscope_request_duration_seconds{stream}` | Total time per request, queue wait included |
+| `tokenscope_queue_wait_seconds` | Time spent waiting for a free slot |
+| `tokenscope_requests_total{outcome,stream}` | Requests served: `ok`, `error`, `timeout`, `cancelled` |
+| `tokenscope_rejected_requests_total{reason}` | Turned away: `unauthorized`, `rate_limited`, `overloaded`, `queue_timeout`, `invalid_request` |
+| `tokenscope_prompt_tokens_total`, `tokenscope_completion_tokens_total` | Token volume |
+| `tokenscope_active_requests`, `tokenscope_queued_requests`, `tokenscope_engine_slots` | Live queue state |
+| `tokenscope_system_cpu_percent`, `tokenscope_system_memory_used_bytes`, `tokenscope_gateway_memory_rss_bytes` | Machine and gateway resources |
+
+Streamed speed leaves out the wait for the first token; non-streamed speed is completion tokens over total time. A request cancelled by the client before the engine reports its token count is counted by pieces received (about one token each). The engine itself also exposes its own metrics at `http://localhost:8081/metrics`.
+
 Interactive docs at http://localhost:8000/docs. Errors follow the OpenAI shape: `400` for invalid input, `503` when the engine is unreachable.
 
 Tests (no model needed, they use a fake backend):

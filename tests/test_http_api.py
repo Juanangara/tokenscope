@@ -5,22 +5,23 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.adapters.inbound.http_api import create_app
+from app.adapters.outbound.prometheus_metrics import PrometheusMetrics
 from app.adapters.outbound.token_bucket import TokenBucketRateLimiter, UnlimitedRateLimiter
 from app.application.access import AccessControl
 from app.application.errors import GenerationTimeout, Overloaded, QueueTimeout
 from app.application.use_cases import GenerateChat, StreamChat
 from app.domain.limits import RequestLimits
 from app.domain.models import ChatChunk
-from tests.fakes import FakeBackend
+from tests.fakes import FakeBackend, RecordingMetrics
 
 BODY = {"messages": [{"role": "user", "content": "hi"}]}
 LIMITS = RequestLimits(max_prompt_chars=100, max_tokens_limit=50)
 
 
-def make_app(backend, limits=LIMITS, access=None):
+def make_app(backend, limits=LIMITS, access=None, **extras):
     access = access or AccessControl({}, UnlimitedRateLimiter())
     return create_app(GenerateChat(backend, limits), StreamChat(backend, limits), access,
-                      model_name="test-model")
+                      model_name="test-model", **extras)
 
 
 def sse_events(text: str) -> list[str]:
@@ -125,6 +126,100 @@ def test_protection_errors_get_their_own_status(error, status, error_type, strea
     assert response.json()["error"]["type"] == error_type
     if status in (429, 503):
         assert response.headers["retry-after"] == "1"
+
+
+class TestOperationalEndpoints:
+    def test_health_says_the_gateway_is_alive(self, backend):
+        response = TestClient(make_app(backend)).get("/health")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
+    def test_ready_follows_the_engine(self, backend):
+        client = TestClient(make_app(backend, is_ready=backend.is_ready))
+
+        assert client.get("/ready").status_code == 200
+
+        backend.ready = False
+        response = client.get("/ready")
+
+        assert response.status_code == 503
+        assert response.json() == {"status": "not_ready"}
+
+    def test_metrics_are_served_in_prometheus_format(self, backend):
+        metrics = PrometheusMetrics()
+        metrics.request_rejected("overloaded")
+        client = TestClient(make_app(backend, metrics=metrics, render_metrics=metrics.render))
+
+        response = client.get("/metrics")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/plain")
+        assert 'tokenscope_rejected_requests_total{reason="overloaded"} 1.0' in response.text
+
+    def test_operational_endpoints_need_no_key(self, backend):
+        access = AccessControl({"alice": "secret"}, UnlimitedRateLimiter())
+        metrics = PrometheusMetrics()
+        client = TestClient(make_app(backend, access=access, metrics=metrics,
+                                     render_metrics=metrics.render, is_ready=backend.is_ready))
+
+        assert [client.get(p).status_code for p in ("/health", "/ready", "/metrics")] == [200] * 3
+
+
+class TestRejectionsAreCounted:
+    def run(self, backend, access=None, body=BODY, headers=None):
+        metrics = RecordingMetrics()
+        client = TestClient(make_app(backend, access=access, metrics=metrics))
+        response = client.post("/v1/chat/completions", json=body, headers=headers)
+        return response, metrics
+
+    def test_invalid_input(self, backend):
+        response, metrics = self.run(backend, body={"messages": []})
+
+        assert response.status_code == 400
+        assert metrics.rejections == ["invalid_request"]
+
+    def test_malformed_body(self, backend):
+        _, metrics = self.run(backend, body={"nothing": 1})
+
+        assert metrics.rejections == ["invalid_request"]
+
+    def test_missing_key(self, backend):
+        access = AccessControl({"alice": "secret"}, UnlimitedRateLimiter())
+
+        response, metrics = self.run(backend, access=access)
+
+        assert response.status_code == 401
+        assert metrics.rejections == ["unauthorized"]
+
+    def test_rate_limit(self, backend):
+        access = AccessControl({}, TokenBucketRateLimiter(requests_per_minute=60, burst=1))
+        metrics = RecordingMetrics()
+        client = TestClient(make_app(backend, access=access, metrics=metrics))
+
+        client.post("/v1/chat/completions", json=BODY)
+        response = client.post("/v1/chat/completions", json=BODY)
+
+        assert response.status_code == 429
+        assert metrics.rejections == ["rate_limited"]
+
+    @pytest.mark.parametrize("error, reason", [
+        (Overloaded("busy"), "overloaded"), (QueueTimeout("waited"), "queue_timeout")])
+    def test_overload(self, error, reason):
+        _, metrics = self.run(FakeBackend(error=error))
+
+        assert metrics.rejections == [reason]
+
+    def test_engine_failures_are_not_rejections(self):
+        _, metrics = self.run(FakeBackend(fail=True))
+
+        assert metrics.rejections == []
+
+    def test_served_requests_are_not_rejections(self, backend):
+        response, metrics = self.run(backend)
+
+        assert response.status_code == 200
+        assert metrics.rejections == []
 
 
 class TestAccess:

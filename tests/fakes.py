@@ -2,7 +2,37 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from app.application.ports.inference_backend import BackendUnavailable
+from app.application.ports.metrics import RequestSample
 from app.domain.models import ChatChunk, ChatRequest, ChatResult, Usage
+
+
+class RecordingMetrics:
+    """MetricsSink that just remembers everything it was told."""
+
+    def __init__(self) -> None:
+        self.samples: list[RequestSample] = []
+        self.rejections: list[str] = []
+        self.queue_waits: list[float] = []
+
+    def request_finished(self, sample: RequestSample) -> None:
+        self.samples.append(sample)
+
+    def request_rejected(self, reason: str) -> None:
+        self.rejections.append(reason)
+
+    def queue_waited(self, seconds: float) -> None:
+        self.queue_waits.append(seconds)
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 100.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
 
 
 class FakeBackend:
@@ -30,6 +60,11 @@ class FakeBackend:
         self.stream_closed = False
         self.active = 0
         self.max_active = 0
+
+    ready = True
+
+    async def is_ready(self) -> bool:
+        return self.ready
 
     def _enter(self, request: ChatRequest) -> None:
         self.requests.append(request)

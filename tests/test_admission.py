@@ -5,6 +5,7 @@ import pytest
 
 from app.application.admission import AdmissionController
 from app.application.errors import Overloaded, QueueTimeout
+from tests.fakes import RecordingMetrics
 
 
 async def hold(controller: AdmissionController, release: asyncio.Event, entered: list | None = None):
@@ -147,6 +148,39 @@ async def test_the_slot_is_released_when_the_work_fails():
     assert controller.running == 0
     async with controller.slot():
         pass
+
+
+async def test_queue_wait_time_is_reported():
+    metrics = RecordingMetrics()
+    controller = AdmissionController(1, 1, queue_timeout_s=5, metrics=metrics)
+    release = asyncio.Event()
+    running = asyncio.create_task(hold(controller, release))
+    waiting = asyncio.create_task(hold(controller, release))
+    await settle()
+
+    await asyncio.sleep(0.05)
+    release.set()
+    await asyncio.gather(running, waiting)
+
+    first, second = metrics.queue_waits
+    assert first < 0.01          # got a slot straight away
+    assert second >= 0.05        # waited behind the first one
+
+
+async def test_rejected_requests_report_no_wait():
+    metrics = RecordingMetrics()
+    controller = AdmissionController(1, 0, queue_timeout_s=5, metrics=metrics)
+    release = asyncio.Event()
+    running = asyncio.create_task(hold(controller, release))
+    await settle()
+
+    with pytest.raises(Overloaded):
+        async with controller.slot():
+            pass
+
+    assert len(metrics.queue_waits) == 1  # only the request that ran
+    release.set()
+    await running
 
 
 @pytest.mark.parametrize("kwargs", [{"max_concurrent": 0, "max_queue": 0},

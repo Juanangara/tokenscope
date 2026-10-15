@@ -29,6 +29,13 @@ class LlamaCppBackend:
             payload["stream_options"] = {"include_usage": True}
         return payload
 
+    async def is_ready(self) -> bool:
+        try:
+            response = await self._client.get("/health", timeout=2)
+        except httpx.HTTPError:
+            return False
+        return response.status_code == 200
+
     async def generate(self, request: ChatRequest) -> ChatResult:
         try:
             response = await self._client.post(

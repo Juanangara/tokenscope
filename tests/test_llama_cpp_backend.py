@@ -108,6 +108,30 @@ async def test_stream_unreachable_engine_becomes_backend_unavailable():
         [c async for c in backend_with(handler).stream(chat())]
 
 
+async def test_ready_when_the_engine_health_check_passes():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"status": "ok"})
+
+    assert await backend_with(handler).is_ready() is True
+    assert seen["path"] == "/health"
+
+
+async def test_not_ready_while_the_model_is_loading():
+    backend = backend_with(lambda request: httpx.Response(503, json={"error": "loading"}))
+
+    assert await backend.is_ready() is False
+
+
+async def test_not_ready_when_the_engine_is_unreachable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    assert await backend_with(handler).is_ready() is False
+
+
 async def test_engine_error_status_becomes_backend_unavailable():
     backend = backend_with(lambda request: httpx.Response(500, text="boom"))
 

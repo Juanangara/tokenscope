@@ -20,6 +20,9 @@ class ProtectedBackend:
         self._admission = admission
         self._timeout_s = generation_timeout_s
 
+    async def is_ready(self) -> bool:
+        return await self._inner.is_ready()
+
     async def generate(self, request: ChatRequest) -> ChatResult:
         async with self._admission.slot():
             try:
