@@ -39,6 +39,16 @@ curl -N http://localhost:8000/v1/chat/completions \
   -d '{"messages":[{"role":"user","content":"Count to 5."}],"stream":true}'
 ```
 
+## Access control
+Set `API_KEYS` in `.env` (`name:key,name:key`) and every request to `/v1/*` must send `Authorization: Bearer <key>`. Generate a key with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Keys are kept only as hashes in memory, and a wrong key never spends anyone's rate-limit budget.
+
+| Situation | Answer |
+|---|---|
+| Missing, malformed or wrong key | `401` with `WWW-Authenticate: Bearer` |
+| Client exceeded its rate limit | `429` with `Retry-After` (seconds until the next request is allowed) |
+
+The rate limit is a token bucket per client: `RATE_LIMIT_PER_MINUTE` is the sustained rate and `RATE_LIMIT_BURST` how many requests can arrive at once. Set `RATE_LIMIT_PER_MINUTE=0` to turn it off (for example in load tests). With `API_KEYS` empty, authentication is off and everyone shares one anonymous budget; the gateway warns about it on start. The docs page stays public.
+
 ## Overload protection
 The engine can only serve a few requests at once, so the gateway decides who gets in:
 

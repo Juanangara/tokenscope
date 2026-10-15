@@ -5,6 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.adapters.inbound.http_api import create_app
+from app.adapters.outbound.token_bucket import TokenBucketRateLimiter, UnlimitedRateLimiter
+from app.application.access import AccessControl
 from app.application.errors import GenerationTimeout, Overloaded, QueueTimeout
 from app.application.use_cases import GenerateChat, StreamChat
 from app.domain.limits import RequestLimits
@@ -15,8 +17,9 @@ BODY = {"messages": [{"role": "user", "content": "hi"}]}
 LIMITS = RequestLimits(max_prompt_chars=100, max_tokens_limit=50)
 
 
-def make_app(backend, limits=LIMITS):
-    return create_app(GenerateChat(backend, limits), StreamChat(backend, limits),
+def make_app(backend, limits=LIMITS, access=None):
+    access = access or AccessControl({}, UnlimitedRateLimiter())
+    return create_app(GenerateChat(backend, limits), StreamChat(backend, limits), access,
                       model_name="test-model")
 
 
@@ -122,6 +125,62 @@ def test_protection_errors_get_their_own_status(error, status, error_type, strea
     assert response.json()["error"]["type"] == error_type
     if status in (429, 503):
         assert response.headers["retry-after"] == "1"
+
+
+class TestAccess:
+    AUTH = {"Authorization": "Bearer secret"}
+
+    def secured_client(self, backend, limiter=None):
+        access = AccessControl({"alice": "secret"}, limiter or UnlimitedRateLimiter())
+        return TestClient(make_app(backend, access=access))
+
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_requests_without_a_key_get_401(self, backend, stream):
+        client = self.secured_client(backend)
+
+        response = client.post("/v1/chat/completions", json={**BODY, "stream": stream})
+
+        assert response.status_code == 401
+        assert response.headers["www-authenticate"] == "Bearer"
+        assert response.json()["error"]["type"] == "authentication_error"
+        assert backend.requests == []
+
+    def test_a_wrong_key_gets_401(self, backend):
+        client = self.secured_client(backend)
+
+        response = client.post("/v1/chat/completions", json=BODY,
+                               headers={"Authorization": "Bearer nope"})
+
+        assert response.status_code == 401
+        assert "invalid" in response.json()["error"]["message"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_a_valid_key_gets_through(self, backend, stream):
+        client = self.secured_client(backend)
+
+        response = client.post("/v1/chat/completions", json={**BODY, "stream": stream},
+                               headers=self.AUTH)
+
+        assert response.status_code == 200
+
+    def test_exceeding_the_rate_limit_gets_429_with_retry_after(self, backend):
+        limiter = TokenBucketRateLimiter(requests_per_minute=60, burst=2)
+        client = self.secured_client(backend, limiter)
+
+        statuses = [client.post("/v1/chat/completions", json=BODY, headers=self.AUTH).status_code
+                    for _ in range(3)]
+        limited = client.post("/v1/chat/completions", json=BODY, headers=self.AUTH)
+
+        assert statuses == [200, 200, 429]
+        assert limited.status_code == 429
+        assert limited.json()["error"]["type"] == "rate_limit_error"
+        assert int(limited.headers["retry-after"]) >= 1
+        assert len(backend.requests) == 2  # refused requests never reach the engine
+
+    def test_documentation_stays_public(self, backend):
+        client = self.secured_client(backend)
+
+        assert client.get("/docs").status_code == 200
 
 
 def test_midstream_generation_timeout_is_reported_inside_the_stream():

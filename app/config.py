@@ -1,5 +1,23 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+
+def parse_api_keys(raw: str) -> dict[str, str]:
+    """Read 'alice:key1,bob:key2' (or just 'key1,key2') into {client name: key}."""
+    keys: dict[str, str] = {}
+    for position, entry in enumerate(filter(None, (e.strip() for e in raw.split(","))), 1):
+        name, separator, key = entry.partition(":")
+        if not separator:
+            name, key = f"client-{position}", entry
+        name, key = name.strip(), key.strip()
+        if not name or not key:
+            raise ValueError(f"invalid API_KEYS entry at position {position}")
+        if name in keys:
+            raise ValueError(f"duplicated client name '{name}' in API_KEYS")
+        if key in keys.values():
+            raise ValueError(f"duplicated key for client '{name}' in API_KEYS")
+        keys[name] = key
+    return keys
 
 
 @dataclass(frozen=True)
@@ -14,6 +32,9 @@ class Settings:
     max_queue_size: int = 8
     queue_timeout_s: float = 30.0
     generation_timeout_s: float = 120.0
+    api_keys: dict[str, str] = field(default_factory=dict)
+    rate_limit_per_minute: float = 120.0  # 0 turns rate limiting off
+    rate_limit_burst: int = 20
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -33,4 +54,9 @@ class Settings:
             generation_timeout_s=float(
                 os.getenv("GENERATION_TIMEOUT_S", defaults.generation_timeout_s)
             ),
+            api_keys=parse_api_keys(os.getenv("API_KEYS", "")),
+            rate_limit_per_minute=float(
+                os.getenv("RATE_LIMIT_PER_MINUTE", defaults.rate_limit_per_minute)
+            ),
+            rate_limit_burst=int(os.getenv("RATE_LIMIT_BURST", defaults.rate_limit_burst)),
         )

@@ -1,14 +1,22 @@
 import json
+import math
 import time
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from app.application.errors import GenerationTimeout, Overloaded, QueueTimeout
+from app.application.access import AccessControl, Client
+from app.application.errors import (
+    GenerationTimeout,
+    Overloaded,
+    QueueTimeout,
+    RateLimited,
+    Unauthorized,
+)
 from app.application.ports.inference_backend import BackendUnavailable
 from app.application.use_cases import GenerateChat, StreamChat
 from app.domain.limits import InvalidRequest
@@ -114,9 +122,24 @@ async def _event_stream(first: ChatChunk | None, chunks: AsyncIterator[ChatChunk
         await chunks.aclose()
 
 
-def create_app(generate_chat: GenerateChat, stream_chat: StreamChat, model_name: str,
-               lifespan=None) -> FastAPI:
+def create_app(generate_chat: GenerateChat, stream_chat: StreamChat, access: AccessControl,
+               model_name: str, lifespan=None) -> FastAPI:
     app = FastAPI(title="tokenscope", lifespan=lifespan)
+
+    async def authorize(authorization: str | None = Header(default=None)) -> Client:
+        return access.authorize(authorization)
+
+    @app.exception_handler(Unauthorized)
+    async def unauthorized_handler(_: Request, exc: Unauthorized):
+        response = _error(401, str(exc), "authentication_error")
+        response.headers["WWW-Authenticate"] = "Bearer"
+        return response
+
+    @app.exception_handler(RateLimited)
+    async def rate_limited_handler(_: Request, exc: RateLimited):
+        response = _error(429, str(exc), "rate_limit_error")
+        response.headers["Retry-After"] = str(max(1, math.ceil(exc.retry_after_s)))
+        return response
 
     @app.exception_handler(InvalidRequest)
     async def invalid_request_handler(_: Request, exc: InvalidRequest):
@@ -142,7 +165,7 @@ def create_app(generate_chat: GenerateChat, stream_chat: StreamChat, model_name:
         register_failure(failure_type)
 
     @app.post("/v1/chat/completions")
-    async def chat_completions(body: ChatCompletionIn):
+    async def chat_completions(body: ChatCompletionIn, _client: Client = Depends(authorize)):
         request = _to_domain(body)
         model = body.model or model_name
 
