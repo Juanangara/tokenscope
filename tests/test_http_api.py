@@ -1,12 +1,25 @@
+import asyncio
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.adapters.inbound.http_api import create_app
-from app.application.use_cases import GenerateChat
+from app.application.use_cases import GenerateChat, StreamChat
 from app.domain.limits import RequestLimits
 from tests.fakes import FakeBackend
 
 BODY = {"messages": [{"role": "user", "content": "hi"}]}
+LIMITS = RequestLimits(max_prompt_chars=100, max_tokens_limit=50)
+
+
+def make_app(backend, limits=LIMITS):
+    return create_app(GenerateChat(backend, limits), StreamChat(backend, limits),
+                      model_name="test-model")
+
+
+def sse_events(text: str) -> list[str]:
+    return [block[len("data: "):] for block in text.strip().split("\n\n")]
 
 
 @pytest.fixture
@@ -16,8 +29,7 @@ def backend():
 
 @pytest.fixture
 def client(backend):
-    use_case = GenerateChat(backend, RequestLimits(max_prompt_chars=100, max_tokens_limit=50))
-    return TestClient(create_app(use_case, model_name="test-model"))
+    return TestClient(make_app(backend))
 
 
 def test_returns_an_openai_style_completion(client):
@@ -63,7 +75,8 @@ def test_request_model_name_is_echoed(client):
         {"messages": [{"role": "user", "content": "x" * 101}]},
         {**BODY, "max_tokens": 51},
         {**BODY, "temperature": 5},
-        {**BODY, "stream": True},
+        {**BODY, "stream": True, "max_tokens": 51},
+        {"messages": [{"role": "robot", "content": "hi"}], "stream": True},
     ],
 )
 def test_rule_violations_return_400(client, body):
@@ -81,10 +94,87 @@ def test_malformed_body_returns_400(client):
 
 
 def test_backend_failure_returns_503():
-    use_case = GenerateChat(FakeBackend(fail=True), RequestLimits())
-    client = TestClient(create_app(use_case, model_name="m"))
+    client = TestClient(make_app(FakeBackend(fail=True)))
 
     response = client.post("/v1/chat/completions", json=BODY)
 
     assert response.status_code == 503
     assert response.json()["error"]["type"] == "service_unavailable"
+
+
+def test_stream_returns_server_sent_events(client):
+    response = client.post("/v1/chat/completions", json={**BODY, "stream": True})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = sse_events(response.text)
+    assert events[-1] == "[DONE]"
+
+    chunks = [json.loads(e) for e in events[:-1]]
+    assert all(c["object"] == "chat.completion.chunk" for c in chunks)
+    assert len({c["id"] for c in chunks}) == 1
+    assert chunks[0]["choices"][0]["delta"] == {"role": "assistant"}
+
+    text = "".join(c["choices"][0]["delta"].get("content", "") for c in chunks)
+    assert text == "hello"
+    assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+    assert chunks[-1]["usage"]["completion_tokens"] == 2
+
+
+def test_stream_with_engine_down_returns_503_status():
+    client = TestClient(make_app(FakeBackend(fail=True)))
+
+    response = client.post("/v1/chat/completions", json={**BODY, "stream": True})
+
+    assert response.status_code == 503
+
+
+def test_stream_that_breaks_midway_ends_with_an_error_event():
+    client = TestClient(make_app(FakeBackend(tokens=("a", "b", "c"), fail_after=2)))
+
+    response = client.post("/v1/chat/completions", json={**BODY, "stream": True})
+
+    assert response.status_code == 200  # headers were already sent
+    events = sse_events(response.text)
+    assert "[DONE]" not in events
+    assert json.loads(events[-1])["error"]["type"] == "service_unavailable"
+
+
+async def test_client_disconnect_stops_the_generation():
+    """Simulate a client that goes away after receiving the first piece of the answer."""
+    backend = FakeBackend(tokens=tuple("x" * 1000))
+    app = make_app(backend)
+    body = json.dumps({**BODY, "stream": True}).encode()
+
+    disconnected = asyncio.Event()
+    request_sent = False
+    body_messages = 0
+
+    async def receive():
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        nonlocal body_messages
+        if message["type"] == "http.response.body" and message.get("body"):
+            body_messages += 1
+            if body_messages == 2:  # the role chunk and one token have been delivered
+                disconnected.set()
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1", "method": "POST", "path": "/v1/chat/completions",
+        "raw_path": b"/v1/chat/completions", "query_string": b"", "scheme": "http",
+        "headers": [(b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode())],
+        "client": ("test", 1), "server": ("test", 80),
+    }
+
+    await asyncio.wait_for(app(scope, receive, send), timeout=5)
+
+    assert backend.stream_closed
+    assert body_messages < 100  # nowhere near the 1000 tokens the engine could have produced

@@ -1,6 +1,7 @@
+from collections.abc import AsyncIterator
 from typing import Protocol
 
-from app.domain.models import ChatRequest, ChatResult
+from app.domain.models import ChatChunk, ChatRequest, ChatResult
 
 
 class BackendUnavailable(Exception):
@@ -9,3 +10,10 @@ class BackendUnavailable(Exception):
 
 class InferenceBackend(Protocol):
     async def generate(self, request: ChatRequest) -> ChatResult: ...
+
+    def stream(self, request: ChatRequest) -> AsyncIterator[ChatChunk]:
+        """Yield the answer piece by piece.
+
+        Closing the iterator (aclose) must stop the generation in the engine.
+        """
+        ...

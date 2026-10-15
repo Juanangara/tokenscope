@@ -1,6 +1,8 @@
+from collections.abc import AsyncIterator
+
 from app.application.ports.inference_backend import InferenceBackend
 from app.domain.limits import RequestLimits
-from app.domain.models import ChatRequest, ChatResult
+from app.domain.models import ChatChunk, ChatRequest, ChatResult
 
 
 class GenerateChat:
@@ -14,3 +16,24 @@ class GenerateChat:
         request = self._limits.with_defaults(request)
         self._limits.validate(request)
         return await self._backend.generate(request)
+
+
+class StreamChat:
+    """Same as GenerateChat, but the answer arrives piece by piece.
+
+    Validation runs when the first piece is requested, before anything is sent to the engine.
+    """
+
+    def __init__(self, backend: InferenceBackend, limits: RequestLimits) -> None:
+        self._backend = backend
+        self._limits = limits
+
+    async def __call__(self, request: ChatRequest) -> AsyncIterator[ChatChunk]:
+        request = self._limits.with_defaults(request)
+        self._limits.validate(request)
+        stream = self._backend.stream(request)
+        try:
+            async for chunk in stream:
+                yield chunk
+        finally:
+            await stream.aclose()

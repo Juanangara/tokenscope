@@ -36,6 +36,15 @@ class Usage:
 
 
 @dataclass(frozen=True)
+class ChatChunk:
+    """One piece of a streamed answer. Usage is only set on the last chunk."""
+
+    delta: str = ""
+    finish_reason: str | None = None
+    usage: Usage | None = None
+
+
+@dataclass(frozen=True)
 class ChatResult:
     content: str
     finish_reason: str

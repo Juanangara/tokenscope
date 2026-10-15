@@ -1,15 +1,17 @@
+import json
 import time
 import uuid
+from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.application.ports.inference_backend import BackendUnavailable
-from app.application.use_cases import GenerateChat
+from app.application.use_cases import GenerateChat, StreamChat
 from app.domain.limits import InvalidRequest
-from app.domain.models import ChatMessage, ChatRequest, GenerationParams
+from app.domain.models import ChatChunk, ChatMessage, ChatRequest, GenerationParams, Usage
 
 
 class MessageIn(BaseModel):
@@ -27,11 +29,12 @@ class ChatCompletionIn(BaseModel):
     stream: bool = False
 
 
+def _error_body(status: int, message: str, error_type: str) -> dict:
+    return {"error": {"message": message, "type": error_type, "code": status}}
+
+
 def _error(status: int, message: str, error_type: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={"error": {"message": message, "type": error_type, "code": status}},
-    )
+    return JSONResponse(status_code=status, content=_error_body(status, message, error_type))
 
 
 def _to_domain(body: ChatCompletionIn) -> ChatRequest:
@@ -47,7 +50,60 @@ def _to_domain(body: ChatCompletionIn) -> ChatRequest:
     return ChatRequest(messages=messages, params=params)
 
 
-def create_app(generate_chat: GenerateChat, model_name: str, lifespan=None) -> FastAPI:
+def _usage_json(usage: Usage) -> dict:
+    return {
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "total_tokens": usage.total_tokens,
+    }
+
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def _chunk_event(completion_id: str, created: int, model: str, delta: dict,
+                 finish_reason: str | None = None, usage: Usage | None = None) -> str:
+    payload = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+    }
+    if usage is not None:
+        payload["usage"] = _usage_json(usage)
+    return _sse(payload)
+
+
+async def _event_stream(first: ChatChunk | None, chunks: AsyncIterator[ChatChunk],
+                        model: str) -> AsyncIterator[str]:
+    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(time.time())
+    try:
+        yield _chunk_event(completion_id, created, model, {"role": "assistant"})
+        pending = [first] if first is not None else []
+        while True:
+            for chunk in pending:
+                delta = {"content": chunk.delta} if chunk.delta else {}
+                yield _chunk_event(completion_id, created, model, delta,
+                                   chunk.finish_reason, chunk.usage)
+            try:
+                pending = [await anext(chunks)]
+            except StopAsyncIteration:
+                break
+        yield "data: [DONE]\n\n"
+    except BackendUnavailable as exc:
+        # The 200 status is already sent, so the error travels inside the stream.
+        yield _sse(_error_body(503, str(exc), "service_unavailable"))
+    finally:
+        # Runs when the stream ends, fails, or the client disconnects (the task is cancelled):
+        # closing the iterator closes the connection to the engine, which stops generating.
+        await chunks.aclose()
+
+
+def create_app(generate_chat: GenerateChat, stream_chat: StreamChat, model_name: str,
+               lifespan=None) -> FastAPI:
     app = FastAPI(title="tokenscope", lifespan=lifespan)
 
     @app.exception_handler(InvalidRequest)
@@ -66,15 +122,29 @@ def create_app(generate_chat: GenerateChat, model_name: str, lifespan=None) -> F
 
     @app.post("/v1/chat/completions")
     async def chat_completions(body: ChatCompletionIn):
-        if body.stream:
-            raise InvalidRequest("streaming is not supported yet")
+        request = _to_domain(body)
+        model = body.model or model_name
 
-        result = await generate_chat(_to_domain(body))
+        if body.stream:
+            chunks = stream_chat(request)
+            # Ask for the first piece before answering: validation errors (400) and an
+            # unreachable engine (503) still get a proper status code.
+            try:
+                first = await anext(chunks)
+            except StopAsyncIteration:
+                first = None
+            return StreamingResponse(
+                _event_stream(first, chunks, model),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        result = await generate_chat(request)
         return {
             "id": f"chatcmpl-{uuid.uuid4().hex}",
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": body.model or model_name,
+            "model": model,
             "choices": [
                 {
                     "index": 0,
@@ -82,11 +152,7 @@ def create_app(generate_chat: GenerateChat, model_name: str, lifespan=None) -> F
                     "finish_reason": result.finish_reason,
                 }
             ],
-            "usage": {
-                "prompt_tokens": result.usage.prompt_tokens,
-                "completion_tokens": result.usage.completion_tokens,
-                "total_tokens": result.usage.total_tokens,
-            },
+            "usage": _usage_json(result.usage),
         }
 
     return app

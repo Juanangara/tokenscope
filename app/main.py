@@ -5,7 +5,7 @@ import httpx
 from app.adapters.inbound.http_api import create_app
 from app.adapters.outbound.llama_cpp import LlamaCppBackend
 from app.application.ports.inference_backend import InferenceBackend
-from app.application.use_cases import GenerateChat
+from app.application.use_cases import GenerateChat, StreamChat
 from app.config import Settings
 from app.domain.limits import RequestLimits
 
@@ -29,7 +29,12 @@ def build_app():
         yield
         await client.aclose()
 
-    return create_app(GenerateChat(backend, limits), settings.model_name, lifespan=lifespan)
+    return create_app(
+        GenerateChat(backend, limits),
+        StreamChat(backend, limits),
+        settings.model_name,
+        lifespan=lifespan,
+    )
 
 
 app = build_app()

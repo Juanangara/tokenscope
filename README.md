@@ -31,6 +31,14 @@ curl http://localhost:8000/v1/chat/completions \
   -d '{"messages":[{"role":"user","content":"Say hello."}],"max_tokens":40}'
 ```
 
+Add `"stream": true` to receive the answer token by token as server-sent events (OpenAI format, ending with `data: [DONE]`). The last chunk before `[DONE]` carries the token usage. If the client disconnects, the generation is stopped in the engine so the slot is freed right away.
+
+```
+curl -N http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Count to 5."}],"stream":true}'
+```
+
 Interactive docs at http://localhost:8000/docs. Errors follow the OpenAI shape: `400` for invalid input, `503` when the engine is unreachable.
 
 Tests (no model needed, they use a fake backend):
