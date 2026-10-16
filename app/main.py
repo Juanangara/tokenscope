@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 
@@ -18,6 +19,8 @@ from app.config import Settings
 from app.domain.limits import RequestLimits
 
 logger = logging.getLogger("tokenscope")
+
+DEMO_DIR = Path(__file__).resolve().parent.parent / "demo"
 
 
 def build_backend(settings: Settings, client: httpx.AsyncClient) -> InferenceBackend:
@@ -73,6 +76,7 @@ def build_app():
         metrics=metrics,
         render_metrics=metrics.render,
         is_ready=backend.is_ready,
+        demo_dir=DEMO_DIR,
     )
 
 

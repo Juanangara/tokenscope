@@ -1,12 +1,15 @@
 import json
 import math
+import mimetypes
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.application.access import AccessControl, Client
@@ -132,9 +135,20 @@ async def _event_stream(first: ChatChunk | None, chunks: AsyncIterator[ChatChunk
 def create_app(generate_chat: GenerateChat, stream_chat: StreamChat, access: AccessControl,
                model_name: str, lifespan=None, *, metrics: MetricsSink | None = None,
                render_metrics: Callable[[], tuple[bytes, str]] | None = None,
-               is_ready: Callable[[], Awaitable[bool]] | None = None) -> FastAPI:
+               is_ready: Callable[[], Awaitable[bool]] | None = None,
+               demo_dir: Path | None = None) -> FastAPI:
     app = FastAPI(title="tokenscope", lifespan=lifespan)
     metrics = metrics or NullMetrics()
+
+    if demo_dir is not None and demo_dir.is_dir():
+        # Browsers refuse to run a module script served as text/plain, which some Windows
+        # setups report for .js: say it explicitly.
+        mimetypes.add_type("text/javascript", ".js")
+        app.mount("/demo", StaticFiles(directory=demo_dir, html=True), name="demo")
+
+        @app.get("/", include_in_schema=False)
+        async def home():
+            return RedirectResponse("/demo/")
 
     async def authorize(authorization: str | None = Header(default=None)) -> Client:
         return access.authorize(authorization)

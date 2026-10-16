@@ -88,6 +88,37 @@ Targets are **provisional**. They are confirmed or corrected in the benchmark ph
 | NFR8 | Portability | Works on Windows and Linux; the engine can change without touching the domain |
 | NFR9 | Security | No secrets in the repo; API keys come from the environment |
 
+## Status
+
+What is done and how it was checked. "Tested" means automated tests; "measured" means the load test or a manual run against the real engine.
+
+| ID | Status | How it was checked |
+|---|---|---|
+| FR1 | Done | Tested and run with `curl`. Not tried with the official OpenAI client library |
+| FR2 | Done | Tested; streamed against the real engine and from the demo page |
+| FR3, FR4 | Done | Tested |
+| FR5, FR6 | Done | Tested; measured with 16 concurrent users |
+| FR7 | Done | Tested; checked that the engine's slot is free after the client leaves |
+| FR8 | Done | Tested; checked against the real service |
+| FR9, FR10 | Done | Tested; read from `/metrics` under real load. CPU and RAM are seen from inside Docker |
+| FR11 | Done | Prometheus scraping and every dashboard query checked with real traffic. The dashboard layout has not been looked at in a browser |
+| FR12 | Done | Tested; `/ready` checked with the engine stopped |
+| FR13, FR14 | Done | `benchmarks/REPORT.md`. p99 is close to the slowest request because each level has few successful requests |
+| FR15 | Done | `docker compose up -d --build`, after downloading the model once |
+| FR16 | Done | Settings come from the environment |
+| FR17 | Partly | The port exists; only the llama.cpp adapter is written |
+| FR18 | Done | Demo chat page; its logic is tested (25 JavaScript tests) and its flows were run against the real service in a simulated DOM. The page has not been looked at in a real browser |
+| FR19, FR20 | Not done | Data drift detection was optional and last |
+| NFR1 | Done | Needs Docker and a one-time model download; no paid service or account |
+| NFR2 | Not measured | Gateway overhead without the model has not been measured |
+| NFR3 | Met | With 16 concurrent users, refusals arrived in 43-53 ms (p95, client side) |
+| NFR4 | Probably met, not measured | Weights are 0.75-1.9 GiB; real memory use could not be measured reliably (`docker stats` ignores memory-mapped files) |
+| NFR5 | Covered by tests | Not reconciled against the load-test request counts |
+| NFR6 | Met | Queue, limits and measurement are tested with a fake backend |
+| NFR7 | Met | Enforced by `tests/test_architecture.py` |
+| NFR8 | Met | Developed on Windows; the containers run Linux |
+| NFR9 | Met | No secrets in the repo (`.env` is ignored). The example Grafana admin password is `admin`: change it on shared machines |
+
 ## Out of scope
 
 Model training or fine-tuning, multi-node scaling (Kubernetes), user accounts with OAuth, and an elaborate web UI.

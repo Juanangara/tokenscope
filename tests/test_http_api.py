@@ -166,6 +166,58 @@ class TestOperationalEndpoints:
         assert [client.get(p).status_code for p in ("/health", "/ready", "/metrics")] == [200] * 3
 
 
+class TestDemoPage:
+    @pytest.fixture
+    def demo(self, tmp_path):
+        (tmp_path / "index.html").write_text("<title>tokenscope demo</title>", encoding="utf-8")
+        (tmp_path / "app.js").write_text("export const x = 1;", encoding="utf-8")
+        return tmp_path
+
+    def test_the_page_and_its_script_are_served(self, backend, demo):
+        client = TestClient(make_app(backend, demo_dir=demo))
+
+        page = client.get("/demo/")
+        script = client.get("/demo/app.js")
+
+        assert page.status_code == 200
+        assert "tokenscope demo" in page.text
+        assert script.status_code == 200
+        assert "javascript" in script.headers["content-type"]
+
+    def test_the_root_leads_to_the_demo(self, backend, demo):
+        client = TestClient(make_app(backend, demo_dir=demo))
+
+        response = client.get("/", follow_redirects=False)
+
+        assert response.status_code in (302, 307)
+        assert response.headers["location"] == "/demo/"
+
+    def test_the_demo_needs_no_key_but_the_api_still_does(self, backend, demo):
+        access = AccessControl({"alice": "secret"}, UnlimitedRateLimiter())
+        client = TestClient(make_app(backend, access=access, demo_dir=demo))
+
+        assert client.get("/demo/").status_code == 200
+        assert client.post("/v1/chat/completions", json=BODY).status_code == 401
+
+    def test_without_a_demo_folder_there_is_no_demo_route(self, backend, tmp_path):
+        client = TestClient(make_app(backend, demo_dir=tmp_path / "missing"))
+
+        assert client.get("/demo/").status_code == 404
+        assert client.get("/", follow_redirects=False).status_code == 404
+
+    def test_no_demo_dir_given(self, backend):
+        assert TestClient(make_app(backend)).get("/demo/").status_code == 404
+
+    def test_the_real_demo_folder_has_what_the_page_loads(self):
+        from app.main import DEMO_DIR
+
+        html = (DEMO_DIR / "index.html").read_text(encoding="utf-8")
+
+        assert 'src="app.js"' in html
+        assert (DEMO_DIR / "app.js").is_file()
+        assert (DEMO_DIR / "lib.js").is_file()
+
+
 class TestRejectionsAreCounted:
     def run(self, backend, access=None, body=BODY, headers=None):
         metrics = RecordingMetrics()
