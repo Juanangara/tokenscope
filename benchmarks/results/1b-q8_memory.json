@@ -1,0 +1,18 @@
+[
+  {
+    "container": "tokenscope-gateway-1",
+    "memory": "37.47MiB / 7.603GiB"
+  },
+  {
+    "container": "tokenscope-llama-1",
+    "memory": "228.1MiB / 7.603GiB"
+  },
+  {
+    "container": "tokenscope-grafana-1",
+    "memory": "61.21MiB / 7.603GiB"
+  },
+  {
+    "container": "tokenscope-prometheus-1",
+    "memory": "23.73MiB / 7.603GiB"
+  }
+]

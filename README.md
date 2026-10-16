@@ -51,6 +51,32 @@ curl -N http://localhost:8000/v1/chat/completions \
   -d '{"messages":[{"role":"user","content":"Count to 5."}],"stream":true}'
 ```
 
+## Benchmark
+Load test with [Locust](https://locust.io) against the full stack, on a laptop CPU (Intel i5-1235U, no GPU), comparing three configurations of Llama 3.2 at 1, 2, 4, 8 and 16 concurrent users. Full tables in [benchmarks/REPORT.md](benchmarks/REPORT.md), raw results in `benchmarks/results/`.
+
+![Benchmark comparison](benchmarks/benchmark.png)
+
+What it shows, for the default engine setup (2 slots):
+
+- **Throughput stops growing at 2 users, the number of slots.** The 1B Q4 model goes from 12.9 to 16.2 tokens/s in total when a second user arrives, then stays flat (16.5, 16.0, 15.9 with 4, 8 and 16). Each request gets slower in exchange: 14.0 tokens/s alone, about 8 with two running.
+- **Past that point, extra users only wait.** Time to first token (p95) for 1B Q4: 0.27 s with 2 users, 9.4 s with 4, 26.6 s with 8. Latency follows users divided by throughput, so it grows in a straight line while throughput does not.
+- **The protection works under 8x overload.** With 16 users, 94-97% of attempts are turned away, each refusal arrives in 43-53 ms (p95, client side), and the requests that were accepted finish with about the same latency as at 8 users (37 s vs 34 s at p95) instead of degrading further. With the heavier 3B model a few waiting requests exceeded the 30 s queue limit and got a `503` (8 at 8 users).
+- **Size matters more than quantization.** 3B Q4 gives about 2.4x less throughput than 1B Q4 (6.7-7.0 vs 16.2-16.5 tokens/s with 2 to 4 users). Q8 instead of Q4 on the 1B model costs 12-28% of throughput for a 1.6x bigger file (1.23 vs 0.75 GiB). This benchmark measures speed, not answer quality: whether Q8 or 3B is worth the cost depends on how good the answers need to be.
+- **Sizing the queue is a latency decision.** The default queue (8 waiting, up to 30 s) is generous. To keep, for example, time to first token under 10 s with the 1B Q4 model, allow about 4 users in flight (2 running + 2 queued, `MAX_QUEUE_SIZE=2`) and refuse the rest.
+
+Limits of these numbers: one laptop, one run per level of 60 seconds (5 to 22 successful requests per level, so p99 is close to the slowest request and small differences are noise), configurations always run in the same order, and no repetitions to estimate variance. In short, isolated requests earlier in development the 1B Q4 model reached about 30 tokens/s; here it gives about 14 per request under sustained load. I have not isolated the cause (a laptop CPU under sustained load, the Docker network path and 64-token answers all differ from those tests), so treat absolute speeds as indicative and the shape of the curves as the result. Peak memory was not measured reliably (`docker stats` does not count memory-mapped model files); the weights themselves are 0.75 to 1.9 GiB.
+
+To reproduce it:
+
+```
+sh scripts/download_benchmark_models.sh     # ~4.1 GB
+pip install -r requirements-bench.txt
+python benchmarks/run_benchmark.py          # about 30 minutes, restarts the engine for each model
+python benchmarks/analyze.py                # writes REPORT.md, benchmark.png and summary.csv
+```
+
+The load is closed-loop: each simulated user sends a streamed request, waits for the whole answer and sends the next, honoring `Retry-After` when turned away. Use `127.0.0.1`, not `localhost`, when measuring from Python on Windows: `localhost` resolves to IPv6 first and every new connection then waits about 2 seconds for the refused attempt.
+
 ## Access control
 Set `API_KEYS` in `.env` (`name:key,name:key`) and every request to `/v1/*` must send `Authorization: Bearer <key>`. Generate a key with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Keys are kept only as hashes in memory, and a wrong key never spends anyone's rate-limit budget.
 

@@ -1,0 +1,13 @@
+{"start": 1792111281.5895808, "status": 200, "error": null, "prompt_chars": 72, "total_s": 5.096563099999912, "ttft_s": 0.5373696000024211, "prompt_tokens": 51, "completion_tokens": 64}
+{"start": 1792111286.6870496, "status": 200, "error": null, "prompt_chars": 59, "total_s": 4.663739100011298, "ttft_s": 0.5396170000021812, "prompt_tokens": 50, "completion_tokens": 64}
+{"start": 1792111291.3513875, "status": 200, "error": null, "prompt_chars": 63, "total_s": 4.485374600015348, "ttft_s": 0.44592240001657046, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111295.837471, "status": 200, "error": null, "prompt_chars": 59, "total_s": 4.00460800001747, "ttft_s": 0.39089969999622554, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111299.8424537, "status": 200, "error": null, "prompt_chars": 72, "total_s": 5.341866599977948, "ttft_s": 0.4592592999979388, "prompt_tokens": 51, "completion_tokens": 64}
+{"start": 1792111305.1842299, "status": 200, "error": null, "prompt_chars": 59, "total_s": 4.621203100017738, "ttft_s": 0.11244650001754053, "prompt_tokens": 50, "completion_tokens": 64}
+{"start": 1792111309.8057475, "status": 200, "error": null, "prompt_chars": 63, "total_s": 5.2865154999890365, "ttft_s": 0.08840459998464212, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111315.0926416, "status": 200, "error": null, "prompt_chars": 59, "total_s": 4.027227999991737, "ttft_s": 0.09382740000728518, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111319.1206138, "status": 200, "error": null, "prompt_chars": 72, "total_s": 4.081427699973574, "ttft_s": 0.08470259999739937, "prompt_tokens": 51, "completion_tokens": 64}
+{"start": 1792111323.2024696, "status": 200, "error": null, "prompt_chars": 59, "total_s": 5.065449899993837, "ttft_s": 0.20550640000146814, "prompt_tokens": 50, "completion_tokens": 64}
+{"start": 1792111328.2678673, "status": 200, "error": null, "prompt_chars": 63, "total_s": 4.454753299971344, "ttft_s": 0.08358659999794327, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111332.7229962, "status": 200, "error": null, "prompt_chars": 59, "total_s": 6.879239799978677, "ttft_s": 0.12404609998338856, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111339.6027677, "status": 200, "error": null, "prompt_chars": 72, "total_s": 6.271829600009369, "ttft_s": 0.11528620001627132, "prompt_tokens": 51, "completion_tokens": 64}

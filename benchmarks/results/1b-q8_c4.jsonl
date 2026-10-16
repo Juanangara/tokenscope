@@ -1,0 +1,16 @@
+{"start": 1792111876.629146, "status": 200, "error": null, "prompt_chars": 59, "total_s": 8.532972199987853, "ttft_s": 0.1931271000066772, "prompt_tokens": 50, "completion_tokens": 64}
+{"start": 1792111876.621868, "status": 200, "error": null, "prompt_chars": 72, "total_s": 8.549577800004045, "ttft_s": 0.20473510000738315, "prompt_tokens": 51, "completion_tokens": 64}
+{"start": 1792111876.6321592, "status": 200, "error": null, "prompt_chars": 59, "total_s": 15.747126400005072, "ttft_s": 8.687205000023823, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111876.6311564, "status": 200, "error": null, "prompt_chars": 63, "total_s": 15.752154499990866, "ttft_s": 8.686185499973362, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111885.1734738, "status": 200, "error": null, "prompt_chars": 59, "total_s": 16.214627000008477, "ttft_s": 7.329624500009231, "prompt_tokens": 50, "completion_tokens": 64}
+{"start": 1792111885.1634827, "status": 200, "error": null, "prompt_chars": 63, "total_s": 16.229020099999616, "ttft_s": 7.336772499984363, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111892.384055, "status": 200, "error": null, "prompt_chars": 59, "total_s": 18.24116609999328, "ttft_s": 9.218441000004532, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111892.3795404, "status": 200, "error": null, "prompt_chars": 72, "total_s": 18.24961979998625, "ttft_s": 9.21930440000142, "prompt_tokens": 51, "completion_tokens": 64}
+{"start": 1792111901.3886228, "status": 200, "error": null, "prompt_chars": 63, "total_s": 18.171036199986702, "ttft_s": 9.48522839997895, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111901.393134, "status": 200, "error": null, "prompt_chars": 59, "total_s": 18.17350410000654, "ttft_s": 9.475104800018016, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111910.6302524, "status": 200, "error": null, "prompt_chars": 59, "total_s": 17.58006639999803, "ttft_s": 9.103860700008227, "prompt_tokens": 50, "completion_tokens": 64}
+{"start": 1792111910.625307, "status": 200, "error": null, "prompt_chars": 72, "total_s": 17.59335189999547, "ttft_s": 9.11098860000493, "prompt_tokens": 51, "completion_tokens": 64}
+{"start": 1792111919.567432, "status": 200, "error": null, "prompt_chars": 72, "total_s": 18.08459120002226, "ttft_s": 8.794773100002203, "prompt_tokens": 51, "completion_tokens": 64}
+{"start": 1792111919.5597463, "status": 200, "error": null, "prompt_chars": 59, "total_s": 18.09937720000744, "ttft_s": 8.809394499985501, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792111928.2204216, "status": 200, "error": null, "prompt_chars": 59, "total_s": 18.525869200006127, "ttft_s": 9.587900700018508, "prompt_tokens": 50, "completion_tokens": 64}
+{"start": 1792111928.2113037, "status": 200, "error": null, "prompt_chars": 63, "total_s": 18.5364253000007, "ttft_s": 9.59455139999045, "prompt_tokens": 48, "completion_tokens": 64}

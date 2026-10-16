@@ -162,7 +162,7 @@ class TestQueueWaitIsReported:
 
         await backend.generate(REQUEST)
 
-        assert metrics.samples[0].queue_wait_s < 0.01
+        assert metrics.samples[0].queue_wait_s < 0.05
 
     @pytest.mark.parametrize("stream", [False, True])
     async def test_a_queued_request_reports_how_long_it_waited(self, metrics, stream):
@@ -176,13 +176,13 @@ class TestQueueWaitIsReported:
         first = asyncio.create_task(serve())
         await asyncio.sleep(0)
         second = asyncio.create_task(serve())
-        await asyncio.sleep(0.1)  # the second one sits in the queue
+        await asyncio.sleep(0.2)  # the second one sits in the queue
         gate.set()
         await asyncio.gather(first, second)
 
         by_wait = sorted(metrics.samples, key=lambda s: s.queue_wait_s)
-        assert by_wait[0].queue_wait_s < 0.01
-        assert by_wait[1].queue_wait_s >= 0.09
+        assert by_wait[0].queue_wait_s < 0.05
+        assert by_wait[1].queue_wait_s >= 0.1  # margin: Windows timers are coarse
         assert by_wait[1].duration_s >= by_wait[1].queue_wait_s  # the wait is part of the total
 
 

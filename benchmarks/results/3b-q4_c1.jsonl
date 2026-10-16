@@ -1,0 +1,5 @@
+{"start": 1792112218.073281, "status": 200, "error": null, "prompt_chars": 72, "total_s": 12.68900779998512, "ttft_s": 1.3521580999949947, "prompt_tokens": 51, "completion_tokens": 64}
+{"start": 1792112230.7631733, "status": 200, "error": null, "prompt_chars": 59, "total_s": 13.138230599986855, "ttft_s": 1.4310097999987192, "prompt_tokens": 50, "completion_tokens": 64}
+{"start": 1792112243.902213, "status": 200, "error": null, "prompt_chars": 63, "total_s": 13.68008409999311, "ttft_s": 2.1298198999720626, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792112257.5823128, "status": 200, "error": null, "prompt_chars": 59, "total_s": 14.265173699997831, "ttft_s": 1.0906033999926876, "prompt_tokens": 48, "completion_tokens": 64}
+{"start": 1792112271.847884, "status": 200, "error": null, "prompt_chars": 72, "total_s": 16.660826000006637, "ttft_s": 2.0066374999878462, "prompt_tokens": 51, "completion_tokens": 64}

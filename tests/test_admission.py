@@ -158,13 +158,13 @@ async def test_queue_wait_time_is_reported():
     waiting = asyncio.create_task(hold(controller, release))
     await settle()
 
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.2)
     release.set()
     await asyncio.gather(running, waiting)
 
     first, second = metrics.queue_waits
-    assert first < 0.01          # got a slot straight away
-    assert second >= 0.05        # waited behind the first one
+    assert first < 0.05          # got a slot straight away
+    assert second >= 0.1         # waited behind the first one (margin: Windows timers are coarse)
 
 
 async def test_rejected_requests_report_no_wait():

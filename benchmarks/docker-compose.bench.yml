@@ -1,0 +1,9 @@
+# Used on top of the main file when benchmarking:
+#   docker compose -f docker-compose.yml -f benchmarks/docker-compose.bench.yml up -d
+# The per-client rate limit would turn the load test into a test of the rate limiter, so it is
+# off. The queue and the timeouts stay as in production: overload behavior is part of the result.
+services:
+  gateway:
+    environment:
+      RATE_LIMIT_PER_MINUTE: "0"
+      MODEL_NAME: ${MODEL_FILE}
