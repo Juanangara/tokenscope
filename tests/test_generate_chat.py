@@ -4,7 +4,7 @@ from app.application.ports.inference_backend import BackendUnavailable
 from app.application.use_cases import GenerateChat, StreamChat
 from app.domain.limits import InvalidRequest, RequestLimits
 from app.domain.models import ChatMessage, ChatRequest, GenerationParams
-from tests.fakes import FakeBackend
+from tests.fakes import FakeBackend, RecordingObserver
 
 LIMITS = RequestLimits(max_prompt_chars=50, max_tokens_limit=100)
 
@@ -79,6 +79,50 @@ async def test_invalid_stream_request_never_reaches_the_backend():
         await collect(StreamChat(backend, LIMITS)(chat("x" * 51)))
 
     assert backend.requests == []
+
+
+class TestPromptObservation:
+    async def test_a_valid_request_is_observed_with_its_defaults_applied(self):
+        observer = RecordingObserver()
+
+        await GenerateChat(FakeBackend(), LIMITS, observer)(chat())
+
+        assert len(observer.requests) == 1
+        assert observer.requests[0].params.max_tokens == 100
+
+    async def test_streamed_requests_are_observed_too(self):
+        observer = RecordingObserver()
+
+        await collect(StreamChat(FakeBackend(), LIMITS, observer)(chat()))
+
+        assert len(observer.requests) == 1
+
+    async def test_an_invalid_request_is_not_observed(self):
+        observer = RecordingObserver()
+
+        with pytest.raises(InvalidRequest):
+            await GenerateChat(FakeBackend(), LIMITS, observer)(chat("x" * 51))
+        with pytest.raises(InvalidRequest):
+            await collect(StreamChat(FakeBackend(), LIMITS, observer)(chat("x" * 51)))
+
+        assert observer.requests == []
+
+    async def test_a_request_the_engine_then_refuses_was_still_demand(self):
+        observer = RecordingObserver()
+
+        with pytest.raises(BackendUnavailable):
+            await GenerateChat(FakeBackend(fail=True), LIMITS, observer)(chat())
+
+        assert len(observer.requests) == 1
+
+    async def test_a_broken_observer_does_not_break_the_answer(self):
+        observer = RecordingObserver(error=RuntimeError("bug"))
+
+        result = await GenerateChat(FakeBackend("fine"), LIMITS, observer)(chat())
+        chunks = await collect(StreamChat(FakeBackend(), LIMITS, observer)(chat()))
+
+        assert result.content == "fine"
+        assert chunks[-1].finish_reason == "stop"
 
 
 async def test_closing_the_stream_closes_the_backend_stream():

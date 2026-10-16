@@ -5,11 +5,14 @@ from pathlib import Path
 import httpx
 
 from app.adapters.inbound.http_api import create_app
+from app.adapters.outbound.language_detector import LangdetectDetector
 from app.adapters.outbound.llama_cpp import LlamaCppBackend
 from app.adapters.outbound.prometheus_metrics import PrometheusMetrics
+from app.adapters.outbound.reference_file import JsonFileReferenceStore
 from app.adapters.outbound.token_bucket import TokenBucketRateLimiter, UnlimitedRateLimiter
 from app.application.access import AccessControl
 from app.application.admission import AdmissionController
+from app.application.drift import DriftTracker, PromptDrift
 from app.application.measured_backend import MeasuredBackend
 from app.application.ports.inference_backend import InferenceBackend
 from app.application.ports.rate_limiter import RateLimiter
@@ -35,6 +38,24 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
     return TokenBucketRateLimiter(settings.rate_limit_per_minute, settings.rate_limit_burst)
 
 
+def build_drift(settings: Settings, metrics: PrometheusMetrics) -> PromptDrift | None:
+    """Prompt drift detection, or None when it is turned off."""
+    if not settings.drift_enabled:
+        return None
+    store = (JsonFileReferenceStore(settings.drift_reference_file)
+             if settings.drift_reference_file else None)
+    tracker = DriftTracker(
+        reference_size=settings.drift_reference_size,
+        window_size=settings.drift_window_size,
+        min_samples=settings.drift_min_samples,
+        threshold=settings.drift_threshold,
+        store=store,
+    )
+    drift = PromptDrift(tracker, LangdetectDetector(), metrics)
+    metrics.watch_drift(drift.snapshot)
+    return drift
+
+
 def build_app():
     settings = Settings.from_env()
     client = httpx.AsyncClient(
@@ -58,6 +79,7 @@ def build_app():
     )
     limits = RequestLimits(settings.max_prompt_chars, settings.max_tokens_limit)
     access = AccessControl(settings.api_keys, build_rate_limiter(settings))
+    observer = build_drift(settings, metrics)
 
     if not access.auth_enabled:
         logger.warning("API_KEYS is empty: authentication is OFF, anyone can use this service")
@@ -68,8 +90,8 @@ def build_app():
         await client.aclose()
 
     return create_app(
-        GenerateChat(backend, limits),
-        StreamChat(backend, limits),
+        GenerateChat(backend, limits, observer),
+        StreamChat(backend, limits, observer),
         access,
         settings.model_name,
         lifespan=lifespan,

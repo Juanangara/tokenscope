@@ -13,6 +13,10 @@ class RecordingMetrics:
         self.samples: list[RequestSample] = []
         self.rejections: list[str] = []
         self.queue_waits: list[float] = []
+        self.prompts: list[tuple[int, str]] = []
+
+    def prompt_observed(self, chars: int, language: str) -> None:
+        self.prompts.append((chars, language))
 
     def request_finished(self, sample: RequestSample) -> None:
         self.samples.append(sample)
@@ -22,6 +26,19 @@ class RecordingMetrics:
 
     def queue_waited(self, seconds: float) -> None:
         self.queue_waits.append(seconds)
+
+
+class RecordingObserver:
+    """PromptObserver that remembers the requests it saw, and can be made to fail."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.requests: list[ChatRequest] = []
+        self.error = error
+
+    def observe(self, request: ChatRequest) -> None:
+        self.requests.append(request)
+        if self.error:
+            raise self.error
 
 
 class FakeClock:

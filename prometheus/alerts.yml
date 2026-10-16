@@ -1,0 +1,17 @@
+groups:
+  - name: tokenscope-drift
+    rules:
+      # A feature of the recent prompts (length, language) no longer looks like the reference.
+      # The threshold is the gateway's own setting, published as a metric, so the rule always
+      # agrees with it. Scores only exist once the reference and the window are full.
+      - alert: PromptDrift
+        expr: tokenscope_prompt_drift_score > on() group_left tokenscope_prompt_drift_threshold
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prompts have drifted: {{ $labels.feature }}"
+          description: >-
+            The {{ $labels.feature }} of recent prompts differs from the reference
+            (PSI {{ $value | printf "%.2f" }}). Latency and queue behavior measured
+            earlier may no longer apply.

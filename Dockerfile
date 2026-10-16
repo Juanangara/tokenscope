@@ -11,7 +11,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY demo ./demo
 
-RUN useradd --system --no-create-home tokenscope
+# /data holds the learned drift reference; it is created here, owned by the service user, so a
+# volume mounted on it is writable too.
+RUN useradd --system --no-create-home tokenscope \
+    && mkdir /data \
+    && chown tokenscope /data
 USER tokenscope
 
 EXPOSE 8000

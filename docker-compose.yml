@@ -30,6 +30,11 @@ services:
       # many requests run as the engine has slots (one variable, no way to get them out of sync).
       LLAMA_BASE_URL: http://llama:8080
       MAX_CONCURRENT_REQUESTS: ${PARALLEL_SLOTS}
+      # The drift reference survives restarts. To learn a new one, delete this file
+      # (docker compose exec gateway rm /data/drift-reference.json) and restart the gateway.
+      DRIFT_REFERENCE_FILE: /data/drift-reference.json
+    volumes:
+      - gateway-data:/data
     depends_on:
       llama:
         condition: service_healthy
@@ -49,6 +54,7 @@ services:
       - --storage.tsdb.retention.time=7d
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
@@ -74,5 +80,6 @@ services:
       - prometheus
 
 volumes:
+  gateway-data:
   prometheus-data:
   grafana-data:

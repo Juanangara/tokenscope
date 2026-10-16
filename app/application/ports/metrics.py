@@ -29,6 +29,10 @@ class MetricsSink(Protocol):
 
     def queue_waited(self, seconds: float) -> None: ...
 
+    def prompt_observed(self, chars: int, language: str) -> None:
+        """A valid prompt arrived: how long it is and which language it is in."""
+        ...
+
 
 class NullMetrics:
     """Used when nobody is listening."""
@@ -40,4 +44,7 @@ class NullMetrics:
         pass
 
     def queue_waited(self, seconds: float) -> None:
+        pass
+
+    def prompt_observed(self, chars: int, language: str) -> None:
         pass

@@ -9,11 +9,14 @@ flowchart LR
         direction TB
         IN[Inbound adapter: HTTP, SSE, demo page] --> AC[Access control: API key, rate limit]
         AC --> UC[Use cases: validate, generate, stream]
+        UC -.-> PD[PromptDrift: observer]
         UC --> M[MeasuredBackend: decorator]
         M --> P[ProtectedBackend: decorator]
         P --> AD[Admission controller: slots, queue]
     end
     P -->|InferenceBackend port| E[llama.cpp server]
+    PD -->|LanguageDetector, ReferenceStore ports| X[langdetect, JSON file]
+    PD -->|MetricsSink port| PR
     M -->|MetricsSink port| PR[Prometheus adapter]
     PR --> GR[Grafana]
 ```
@@ -25,11 +28,13 @@ The gateway is our own code: queueing, concurrency limits, streaming, API keys, 
 ```
 app/
   domain/          pure rules: chat request, generation parameters, request limits
-  application/     use cases, access control, admission control, the two decorators
-    ports/         InferenceBackend, MetricsSink, RateLimiter
+  application/     use cases, access control, admission control, drift detection, the two decorators
+    ports/         InferenceBackend, MetricsSink, RateLimiter, PromptObserver, LanguageDetector,
+                   ReferenceStore
   adapters/
     inbound/       FastAPI (HTTP, server-sent events, demo page)
-    outbound/      LlamaCppBackend, PrometheusMetrics, TokenBucketRateLimiter
+    outbound/      LlamaCppBackend, PrometheusMetrics, TokenBucketRateLimiter,
+                   LangdetectDetector, JsonFileReferenceStore
   config.py, main.py   configuration from the environment and the wiring of everything
 ```
 
@@ -44,7 +49,7 @@ Tests for the queue, the limits and the measurement run against a `FakeBackend` 
 ## How a request travels
 
 1. The HTTP adapter authenticates the caller and checks its rate-limit budget (`AccessControl`).
-2. The use case applies the defaults and validates the request against the limits. Invalid input never reaches the engine.
+2. The use case applies the defaults and validates the request against the limits. Invalid input never reaches the engine. A valid request is also shown to the `PromptObserver`, which reduces it to its length and language for drift detection; if the observer fails, the request is still served.
 3. `MeasuredBackend` starts its clock, then `ProtectedBackend` asks the `AdmissionController` for a slot: it runs, waits in the queue, or is refused.
 4. The `LlamaCppBackend` adapter streams the answer from the engine. Closing the stream (the client left, a timeout, or a normal end) closes the connection to the engine, which stops generating.
 5. `MeasuredBackend` reports one sample to the `MetricsSink`: outcome, duration, time to first token, tokens, and how long it waited in the queue.
@@ -66,12 +71,16 @@ For streamed answers, the HTTP adapter asks for the first piece before it sends 
 | Decorator | `ProtectedBackend`, `MeasuredBackend` | Add protection and measurement without mixing them into the engine adapter or each other |
 | Token bucket | `TokenBucketRateLimiter` | Per-client rate limit that allows short bursts |
 | Factory | `build_backend`, `build_rate_limiter` in `main.py` | Choose the implementation from configuration |
-| Null object | `NullMetrics`, `UnlimitedRateLimiter` | Turn a feature off without `if` checks in the callers |
+| Null object | `NullMetrics`, `UnlimitedRateLimiter`, `NoLanguageDetector` | Turn a feature off without `if` checks in the callers |
+| Observer | `PromptObserver` (`PromptDrift`) | Watch every valid prompt without the use case knowing what is done with it |
 
 No Repository or Unit of Work: there is no persistence.
 
 ## Trade-offs worth knowing
 
 - **Measure outside the protection.** `MeasuredBackend` wraps `ProtectedBackend`, so durations and time to first token include the wait in the queue: that is what the client experiences. The wait is also reported separately, so generation speed can be computed without it. The admission controller hands the wait to the measuring layer through a `ContextVar`, because both run in the task that serves the request. That avoids changing the port, at the cost of a hidden channel between two classes; the tests that combine both decorators exist for that reason.
-- **State is in memory.** The queue and the rate-limit buckets live in the process. That is simple and fast, and it limits the service to one node.
+- **State is in memory.** The queue, the rate-limit buckets and the drift window live in the process. That is simple and fast, and it limits the service to one node. Only the drift reference is persisted.
+- **Drift is observed synchronously.** Language detection runs in the event loop and costs 5-7 ms per request. Moving it to a thread would not help much (the library is pure Python and holds the GIL), and next to answers that take seconds the cost is small, so the simple option was kept. The first detection loads the language profiles (about 0.6 s), so it is done once at startup.
+- **Drift never fails a request.** Observation is wrapped so that an error in it is logged and the request is served anyway; saving the reference can fail without stopping the service either.
+- **PSI buckets are chosen by measurement.** The length buckets and the default sample sizes come from a simulation of the false-alarm rate (with 8 buckets and 100 samples it was 7%; with 5 buckets, 2%). `tests/test_drift.py` repeats that measurement so a change to those settings cannot quietly make the alert noisy.
 - **One engine adapter.** The port is real, but only llama.cpp is implemented, so how well it fits an engine with a different streaming or cancellation behavior is untested.

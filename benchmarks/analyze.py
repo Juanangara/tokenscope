@@ -151,6 +151,11 @@ def write_report(data: dict) -> None:
         "With so few requests per level, small differences (especially time to first token at 1 "
         "and 2 users, which mostly reflects whether a long prompt happened to be in the sample) "
         "are noise.", "",
+        "**Not an isolated machine:** other, unrelated Docker containers (a database and an "
+        "Airflow scheduler, among others) were running on the same laptop during these runs, and "
+        "the scheduler alone was seen using between 4% and 90% of a core. This was not "
+        "controlled, so treat absolute speeds as indicative and compare configurations with each "
+        "other rather than with other machines.", "",
     ]
 
     for config, (label, _) in CONFIGS.items():

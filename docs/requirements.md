@@ -66,7 +66,7 @@ Priority: **M** = must, **S** = should.
 |---|---|---|---|
 | FR18 | M | A small client (chat or simple RAG) uses the service to show it in action | |
 
-### 7. Data drift (last phase, only if time allows)
+### 7. Data drift
 | ID | Pri | Requirement | Acceptance |
 |---|---|---|---|
 | FR19 | S | Record prompt statistics (length, language) | |
@@ -103,14 +103,15 @@ What is done and how it was checked. "Tested" means automated tests; "measured" 
 | FR9, FR10 | Done | Tested; read from `/metrics` under real load. CPU and RAM are seen from inside Docker |
 | FR11 | Done | Prometheus scraping and every dashboard query checked with real traffic. The dashboard layout has not been looked at in a browser |
 | FR12 | Done | Tested; `/ready` checked with the engine stopped |
-| FR13, FR14 | Done | `benchmarks/REPORT.md`. p99 is close to the slowest request because each level has few successful requests |
+| FR13, FR14 | Done | `benchmarks/REPORT.md`. p99 is close to the slowest request because each level has few successful requests, and the laptop was not otherwise idle (other containers were running) |
 | FR15 | Done | `docker compose up -d --build`, after downloading the model once |
 | FR16 | Done | Settings come from the environment |
 | FR17 | Partly | The port exists; only the llama.cpp adapter is written |
 | FR18 | Done | Demo chat page; its logic is tested (25 JavaScript tests) and its flows were run against the real service in a simulated DOM. The page has not been looked at in a real browser |
-| FR19, FR20 | Not done | Data drift detection was optional and last |
+| FR19 | Done | Tested. Records the length and language of each prompt (as metrics and as features), never its text. Language is `unknown` under 40 characters because the detector is unreliable on short text |
+| FR20 | Done | Tested, including a simulation of the false-alarm rate (about 2%) and of detection (large shifts always caught, moderate ones rarely). Run end to end with `scripts/drift_demo.py`: both scores crossed the threshold and the `PromptDrift` alert reached `firing`. The comparison is continuous (read at every scrape), not periodic; there is no notification channel for the alert |
 | NFR1 | Done | Needs Docker and a one-time model download; no paid service or account |
-| NFR2 | Not measured | Gateway overhead without the model has not been measured |
+| NFR2 | Not measured | Gateway overhead without the model has not been measured. What is known: prompt observation for drift adds about 5-7 ms per request (measured on its own) |
 | NFR3 | Met | With 16 concurrent users, refusals arrived in 43-53 ms (p95, client side) |
 | NFR4 | Probably met, not measured | Weights are 0.75-1.9 GiB; real memory use could not be measured reliably (`docker stats` ignores memory-mapped files) |
 | NFR5 | Covered by tests | Not reconciled against the load-test request counts |

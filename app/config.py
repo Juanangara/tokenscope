@@ -20,6 +20,18 @@ def parse_api_keys(raw: str) -> dict[str, str]:
     return keys
 
 
+def parse_flag(raw: str | None, default: bool) -> bool:
+    """Read a true/false setting; an unset or empty one keeps the default."""
+    if raw is None or not raw.strip():
+        return default
+    value = raw.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"expected true or false, got '{raw}'")
+
+
 @dataclass(frozen=True)
 class Settings:
     backend: str = "llama_cpp"
@@ -35,6 +47,12 @@ class Settings:
     api_keys: dict[str, str] = field(default_factory=dict)
     rate_limit_per_minute: float = 120.0  # 0 turns rate limiting off
     rate_limit_burst: int = 20
+    drift_enabled: bool = True
+    drift_reference_size: int = 100  # prompts used to learn the reference, if there is no file
+    drift_window_size: int = 100  # most recent prompts compared with the reference
+    drift_min_samples: int = 100  # fewer than this and the score is too noisy to publish
+    drift_threshold: float = 0.25  # PSI above which a feature counts as drifted
+    drift_reference_file: str = ""  # where the reference is kept; empty keeps it in memory only
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -59,4 +77,12 @@ class Settings:
                 os.getenv("RATE_LIMIT_PER_MINUTE", defaults.rate_limit_per_minute)
             ),
             rate_limit_burst=int(os.getenv("RATE_LIMIT_BURST", defaults.rate_limit_burst)),
+            drift_enabled=parse_flag(os.getenv("DRIFT_ENABLED"), defaults.drift_enabled),
+            drift_reference_size=int(
+                os.getenv("DRIFT_REFERENCE_SIZE", defaults.drift_reference_size)
+            ),
+            drift_window_size=int(os.getenv("DRIFT_WINDOW_SIZE", defaults.drift_window_size)),
+            drift_min_samples=int(os.getenv("DRIFT_MIN_SAMPLES", defaults.drift_min_samples)),
+            drift_threshold=float(os.getenv("DRIFT_THRESHOLD", defaults.drift_threshold)),
+            drift_reference_file=os.getenv("DRIFT_REFERENCE_FILE", defaults.drift_reference_file),
         )
